@@ -562,6 +562,10 @@ function App() {
     }
   }
 
+  function removeSelectedFile(index) {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function sendMessage() {
     if ((!input.trim() && selectedFiles.length === 0) || loading) {
       return;
@@ -869,7 +873,21 @@ function App() {
             <div className="selected-files">
               {selectedFiles.map((file, index) => (
                 <div key={index} className="selected-file">
-                  📄 {file.name}
+                  <span>
+                    {file.mimeType?.startsWith("image/")
+                      ? "🖼️"
+                      : "📄"}{" "}
+                    {file.name}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => removeSelectedFile(index)}
+                    className="remove-file-button"
+                    title="Remove file"
+                  >
+                    ×
+                  </button>
                 </div>
               ))}
             </div>
