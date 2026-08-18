@@ -1,0 +1,59 @@
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
+
+dotenv.config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const ai = new GoogleGenAI({});
+
+app.post("/chat", async (req, res) => {
+  const { message } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ error: "Message is required" });
+  }
+
+  try {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const stream = await ai.models.generateContentStream({
+      model: "gemini-3.5-flash-lite",
+      contents: message,
+    });
+
+    for await (const chunk of stream) {
+      const text = chunk.text || "";
+
+      if (text) {
+        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error("Gemini error:", error);
+
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    } else {
+      res.write(`data: ${JSON.stringify({
+        error: error.message
+      })}\n\n`);
+      res.end();
+    }
+  }
+});
+
+app.listen(3001, "0.0.0.0", () => {
+  console.log("AI server running on port 3001");
+});

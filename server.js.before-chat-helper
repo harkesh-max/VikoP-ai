@@ -1,0 +1,91 @@
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
+
+dotenv.config();
+
+const app = express();
+
+app.use(cors());
+app.use(express.json({ limit: "20mb" }));
+
+const ai = new GoogleGenAI({});
+
+app.post("/chat", async (req, res) => {
+  const { message, history = [] } = req.body;
+
+  if (!message && history.length === 0) {
+    return res.status(400).json({ error: "Message is required" });
+  }
+
+  try {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const contents = history
+      .filter((item) => item && item.role)
+      .map((item) => {
+        const parts = [];
+
+        if (item.text && item.text.trim()) {
+          parts.push({ text: item.text });
+        }
+
+        if (Array.isArray(item.attachments)) {
+          for (const file of item.attachments) {
+            if (file?.data && file?.mimeType) {
+              parts.push({
+                inlineData: {
+                  mimeType: file.mimeType,
+                  data: file.data
+                }
+              });
+            }
+          }
+        }
+
+        return {
+          role: item.role === "assistant" ? "model" : "user",
+          parts
+        };
+      });
+
+
+const stream = await ai.models.generateContentStream({
+  model: "gemini-3.5-flash-lite",
+  systemInstruction:
+    "You are VikoAI. Always use the conversation history provided in contents. If the user previously told you their name or other information, remember it and use it naturally in later replies.",
+  contents
+});
+
+    for await (const chunk of stream) {
+      const text = chunk.text || "";
+
+      if (text) {
+        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error("Gemini error:", error);
+
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    } else {
+      res.write(
+        `data: ${JSON.stringify({ error: error.message })}\n\n`
+      );
+      res.end();
+    }
+  }
+});
+
+app.listen(3001, "0.0.0.0", () => {
+  console.log("AI server running on port 3001");
+});
