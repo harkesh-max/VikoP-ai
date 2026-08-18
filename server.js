@@ -9,6 +9,11 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
+app.use(express.static("dist"));
+
+app.get("/", (req, res) => {
+  res.sendFile("index.html", { root: "dist" });
+});
 
 const ai = new GoogleGenAI({});
 
@@ -124,6 +129,8 @@ let memoryInstruction =
   }
 });
 
-app.listen(3001, "0.0.0.0", () => {
-  console.log("AI server running on port 3001");
+const PORT = process.env.PORT || 3001;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`AI server running on port ${PORT}`);
 });
