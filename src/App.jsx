@@ -60,7 +60,24 @@ function App() {
   const recognitionRef = useRef(null);
 
   useEffect(() => {
-    localStorage.setItem(CURRENT_CHAT_KEY, JSON.stringify(messages));
+    try {
+      const safeMessages = messages.map((message) => ({
+        ...message,
+        attachments: Array.isArray(message.attachments)
+          ? message.attachments.map((file) => ({
+              name: file.name,
+              mimeType: file.mimeType
+            }))
+          : []
+      }));
+
+      localStorage.setItem(
+        CURRENT_CHAT_KEY,
+        JSON.stringify(safeMessages)
+      );
+    } catch (error) {
+      console.error("Chat save failed:", error);
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -96,6 +113,16 @@ function App() {
     const id = activeChatId || createChatId();
     const title = getChatTitle(nextMessages);
 
+    const safeMessages = nextMessages.map((message) => ({
+      ...message,
+      attachments: Array.isArray(message.attachments)
+        ? message.attachments.map((file) => ({
+            name: file.name,
+            mimeType: file.mimeType
+          }))
+        : []
+    }));
+
     setActiveChatId(id);
 
     setChatHistory((prev) => {
@@ -107,7 +134,7 @@ function App() {
             ? {
                 ...chat,
                 title,
-                messages: nextMessages,
+                messages: safeMessages,
                 updatedAt: Date.now()
               }
             : chat
@@ -118,7 +145,7 @@ function App() {
         {
           id,
           title,
-          messages: nextMessages,
+          messages: safeMessages,
           updatedAt: Date.now()
         },
         ...prev
@@ -167,7 +194,10 @@ function App() {
   async function handleFileSelect(event) {
     const files = Array.from(event.target.files || []);
 
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      event.target.value = "";
+      return;
+    }
 
     const validFiles = files.filter((file) => {
       const name = (file.name || "").toLowerCase();
@@ -196,38 +226,175 @@ function App() {
 
     try {
       const fileData = await Promise.all(
-        validFiles.map(
-          (file) =>
-            new Promise((resolve, reject) => {
+        validFiles.map(async (file) => {
+          const name = (file.name || "").toLowerCase();
+          const type = (file.type || "").toLowerCase();
+
+          const isImage =
+            type.startsWith("image/") ||
+            /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name);
+
+          const isPDF =
+            name.endsWith(".pdf") || type === "application/pdf";
+
+          if (isImage) {
+            if (file.size > 50 * 1024 * 1024) {
+              throw new Error("Image 50 MB se badi hai.");
+            }
+
+            return await new Promise((resolve, reject) => {
               const reader = new FileReader();
 
               reader.onload = () => {
-                const result = String(reader.result || "");
-                const base64 = result.includes(",")
-                  ? result.split(",")[1]
-                  : result;
+                const img = new Image();
 
-                resolve({
-                  name: file.name,
-                  mimeType:
-                    file.type ||
-                    (file.name.toLowerCase().endsWith(".pdf")
-                      ? "application/pdf"
-                      : "application/octet-stream"),
-                  data: base64
-                });
+                img.onload = () => {
+                  const MAX_SIZE = 1600;
+
+                  let width = img.naturalWidth || img.width;
+                  let height = img.naturalHeight || img.height;
+
+                  if (!width || !height) {
+                    reject(new Error("Invalid image dimensions"));
+                    return;
+                  }
+
+                  const scale = Math.min(
+                    1,
+                    MAX_SIZE / Math.max(width, height)
+                  );
+
+                  width = Math.max(1, Math.round(width * scale));
+                  height = Math.max(1, Math.round(height * scale));
+
+                  const canvas = document.createElement("canvas");
+                  canvas.width = width;
+                  canvas.height = height;
+
+                  const ctx = canvas.getContext("2d");
+
+                  if (!ctx) {
+                    reject(new Error("Canvas unavailable"));
+                    return;
+                  }
+
+                  ctx.drawImage(img, 0, 0, width, height);
+
+                  canvas.toBlob(
+                    (blob) => {
+                      if (!blob) {
+                        reject(new Error("Image compression failed"));
+                        return;
+                      }
+
+                      const blobReader = new FileReader();
+
+                      blobReader.onload = () => {
+                        const result = String(blobReader.result || "");
+                        const base64 = result.includes(",")
+                          ? result.split(",")[1]
+                          : result;
+
+                        resolve({
+                          name: file.name,
+                          mimeType: "image/jpeg",
+                          data: base64
+                        });
+                      };
+
+                      blobReader.onerror = () =>
+                        reject(new Error("Compressed image read failed."));
+
+                      blobReader.readAsDataURL(blob);
+                    },
+                    "image/jpeg",
+                    0.82
+                  );
+                };
+
+                img.onerror = () =>
+                  reject(new Error("Invalid image file."));
+
+                img.src = String(reader.result || "");
               };
 
-              reader.onerror = () => reject(reader.error);
+              reader.onerror = () =>
+                reject(new Error("Image file read failed."));
+
               reader.readAsDataURL(file);
-            })
-        )
+            });
+          }
+
+          if (isPDF) {
+            if (file.size > 20 * 1024 * 1024) {
+              throw new Error("PDF 20 MB se badi hai.");
+            }
+
+            return await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+
+              reader.onload = () => {
+                try {
+                  const result = String(reader.result || "");
+
+                  if (!result) {
+                    reject(new Error("PDF read nahi ho payi."));
+                    return;
+                  }
+
+                  const base64 = result.includes(",")
+                    ? result.split(",")[1]
+                    : result;
+
+                  resolve({
+                    name: file.name,
+                    mimeType: "application/pdf",
+                    data: base64
+                  });
+                } catch (error) {
+                  reject(error);
+                }
+              };
+
+              reader.onerror = () =>
+                reject(new Error("PDF file read failed."));
+
+              reader.readAsDataURL(file);
+            });
+          }
+
+          if (file.size > 5 * 1024 * 1024) {
+            throw new Error("Text file 5 MB se badi hai.");
+          }
+
+          return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+
+            reader.onload = () => {
+              const result = String(reader.result || "");
+              const base64 = result.includes(",")
+                ? result.split(",")[1]
+                : result;
+
+              resolve({
+                name: file.name,
+                mimeType: file.type || "text/plain",
+                data: base64
+              });
+            };
+
+            reader.onerror = () =>
+              reject(new Error("Text file read failed."));
+
+            reader.readAsDataURL(file);
+          });
+        })
       );
 
       setSelectedFiles((prev) => [...prev, ...fileData]);
     } catch (error) {
-      console.error(error);
-      alert("File read nahi ho payi.");
+      console.error("File processing error:", error);
+      alert(error?.message || "File process nahi ho payi.");
     }
 
     event.target.value = "";
@@ -252,7 +419,7 @@ function App() {
     setMessages(displayMessages);
 
     try {
-      const response = await fetch("http://localhost:3001/chat", {
+      const response = await fetch("/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
