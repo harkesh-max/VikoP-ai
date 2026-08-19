@@ -688,3 +688,71 @@ button {
   }
 }
 
+
+/* ===== BUSINESS ASSISTANT BUTTONS ===== */
+.business-tools-persistent {
+  position: fixed !important;
+  left: 50%;
+  bottom: 78px;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(520px, calc(100% - 32px));
+  margin: 0 !important;
+  padding: 8px;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  background: rgba(4, 18, 25, 0.96);
+  border: 1px solid rgba(79, 209, 255, 0.18);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+}
+
+.business-tools-persistent button {
+  min-height: 46px;
+  color: #ffffff;
+  border: 1px solid rgba(79, 209, 255, 0.35);
+  background: rgba(49, 184, 208, 0.10);
+  border-radius: 12px;
+  padding: 10px 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.business-tools-persistent button:hover {
+  background: rgba(49, 184, 208, 0.20);
+}
+
+/* Extra bottom space so chat answers don't hide behind buttons */
+.business-tools-persistent ~ .input-area {
+  position: relative;
+  z-index: 30;
+}
+
+/* ===== BUSINESS ANSWER HEADINGS ===== */
+.message.assistant h1,
+.message.assistant h3 {
+  color: #FFD700 !important;
+  font-weight: 800;
+}
+
+.message.assistant h2 {
+  color: #FFFFFF !important;
+  font-weight: 800;
+}
+
+@media (max-width: 600px) {
+  .business-tools-persistent {
+    bottom: 76px;
+    width: calc(100% - 20px);
+    padding: 7px;
+    gap: 7px;
+  }
+
+  .business-tools-persistent button {
+    min-height: 42px;
+    padding: 8px 5px;
+    font-size: 12px;
+  }
+}
+
