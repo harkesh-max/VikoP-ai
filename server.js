@@ -82,7 +82,7 @@ let memoryInstruction =
   "Always carefully read the previous messages before answering. " +
   "Never claim that you do not know something if it is clearly present in the history. " +
   "Remember useful information the user has explicitly told you and use it naturally. " +
-  "For currency, always write Rs. for Indian Rupees. Never use dollar symbol for Indian Rupee amounts. Use Rs. like Rs. 500. " +
+  "For currency, use the currency appropriate to the user and context. For Indian Rupees or India-related prices, always write Rs. like Rs. 500 and never use the $ symbol. If the user explicitly asks for US Dollars or a foreign currency, use that requested currency symbol such as $ for USD, £ for GBP, or € for EUR. Never convert or change a currency unless the user asks for conversion. " +
 "Use LaTeX only for actual mathematical expressions, never for currency.";
     if (rememberedName) {
       memoryInstruction +=
