@@ -628,3 +628,39 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.business-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: min(520px, 100%);
+  margin-top: 22px;
+}
+
+.business-tools button {
+  border: 1px solid rgba(49, 184, 208, 0.35);
+  background: rgba(49, 184, 208, 0.10);
+  color: inherit;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.business-tools button:hover {
+  transform: translateY(-1px);
+  background: rgba(49, 184, 208, 0.18);
+}
+
+.mode-active {
+  border-color: #31b8d0 !important;
+  background: rgba(49, 184, 208, 0.18) !important;
+}
+
+@media (max-width: 600px) {
+  .business-tools {
+    grid-template-columns: 1fr;
+  }
+}
+

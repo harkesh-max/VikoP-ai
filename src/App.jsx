@@ -54,6 +54,7 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [listening, setListening] = useState(false);
+  const [appMode, setAppMode] = useState("chat");
 
   const fileInputRef = useRef(null);
   const userMessageRef = useRef(null);
@@ -587,8 +588,26 @@ function App() {
     setInput("");
     setSelectedFiles([]);
 
+    const modeInstruction =
+      appMode === "business"
+        ? `BUSINESS ASSISTANT MODE:
+Act as a professional AI business assistant for entrepreneurs and business owners.
+Help with business strategy, marketing, sales, customer support, emails, proposals, pricing, market research, productivity and business decisions.
+Give practical, actionable answers.
+When useful, structure answers with clear steps, tables, checklists or templates.
+For international users, use clear professional English when the user writes in English.
+Do not pretend to be a lawyer, accountant or financial adviser; clearly mention when professional advice is needed.` 
+        : "";
+
+    const aiMessage = modeInstruction
+      ? `${modeInstruction}
+
+USER REQUEST:
+${userMessage}`
+      : userMessage;
+
     await requestAI(
-      userMessage,
+      aiMessage,
       updatedMessages,
       attachments,
       updatedMessages
@@ -689,6 +708,20 @@ function App() {
 
           <div className="header-actions">
             <button
+              className={`header-button ${appMode === "chat" ? "mode-active" : ""}`}
+              onClick={() => setAppMode("chat")}
+            >
+              💬 AI Chat
+            </button>
+
+            <button
+              className={`header-button ${appMode === "business" ? "mode-active" : ""}`}
+              onClick={() => setAppMode("business")}
+            >
+              💼 Business
+            </button>
+
+            <button
               className="header-button"
               onClick={() => setShowHistory((prev) => !prev)}
             >
@@ -756,9 +789,37 @@ function App() {
       <main className="chat">
         {messages.length === 0 ? (
           <div className="welcome">
-            <div className="robot">🤖</div>
-            <h2>How can I help you?</h2>
-            <p>Ask me anything...</p>
+            {appMode === "business" ? (
+              <>
+                <div className="robot">💼</div>
+                <h2>VikoP Business Assistant</h2>
+                <p>Your AI partner for smarter business decisions.</p>
+
+                <div className="business-tools">
+                  <button onClick={() => setInput("Create a marketing plan for my business")}>
+                    📣 Marketing Plan
+                  </button>
+
+                  <button onClick={() => setInput("Help me create a sales strategy")}>
+                    📈 Sales Strategy
+                  </button>
+
+                  <button onClick={() => setInput("Write a professional business email")}>
+                    ✉️ Business Email
+                  </button>
+
+                  <button onClick={() => setInput("Analyze my business idea and suggest improvements")}>
+                    💡 Business Idea
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="robot">🤖</div>
+                <h2>How can I help you?</h2>
+                <p>Ask me anything...</p>
+              </>
+            )}
           </div>
         ) : (
           messages.map((message, index) => (
