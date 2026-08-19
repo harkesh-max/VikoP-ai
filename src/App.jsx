@@ -804,7 +804,6 @@ ${userMessage}`
           </div>
         ) : (
           messages.map((message, index) => (
-          messages.map((message, index) => (
             <div
               key={index}
               ref={
