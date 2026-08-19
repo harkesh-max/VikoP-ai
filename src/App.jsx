@@ -7,6 +7,8 @@ import "./App.css";
 
 const CURRENT_CHAT_KEY = "vikop-current-chat";
 const BUSINESS_CHAT_KEY = "vikop-business-chat";
+const CHAT_HISTORY_KEY = "vikop-chat-history";
+const BUSINESS_HISTORY_KEY = "vikop-business-history";
 
 function createChatId() {
   return Date.now().toString() + Math.random().toString(36).slice(2, 8);
@@ -46,6 +48,28 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [listening, setListening] = useState(false);
   const [appMode, setAppMode] = useState("chat");
+  const [showHistory, setShowHistory] = useState(false);
+
+  const [chatHistory, setChatHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem(CHAT_HISTORY_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [businessHistory, setBusinessHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem(BUSINESS_HISTORY_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [activeBusinessChatId, setActiveBusinessChatId] = useState(null);
 
   const messages =
     appMode === "business" ? businessMessages : chatMessages;
@@ -84,16 +108,117 @@ function App() {
     }
   }, [businessMessages]);
 
+  useEffect(() => {
+    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory));
+  }, [chatHistory]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      BUSINESS_HISTORY_KEY,
+      JSON.stringify(businessHistory)
+    );
+  }, [businessHistory]);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+
+    const safeMessages = messages.map((message) => ({
+      ...message,
+      attachments: Array.isArray(message.attachments)
+        ? message.attachments.map((file) => ({
+            name: file.name,
+            mimeType: file.mimeType
+          }))
+        : []
+    }));
+
+    const id =
+      appMode === "business"
+        ? activeBusinessChatId || createChatId()
+        : activeChatId || createChatId();
+
+    const title = getChatTitle(safeMessages);
+    const updatedChat = {
+      id,
+      title,
+      messages: safeMessages,
+      updatedAt: Date.now()
+    };
+
+    if (appMode === "business") {
+      if (!activeBusinessChatId) setActiveBusinessChatId(id);
+
+      setBusinessHistory((prev) => {
+        const exists = prev.some((chat) => chat.id === id);
+        return exists
+          ? prev.map((chat) => (chat.id === id ? updatedChat : chat))
+          : [updatedChat, ...prev];
+      });
+    } else {
+      if (!activeChatId) setActiveChatId(id);
+
+      setChatHistory((prev) => {
+        const exists = prev.some((chat) => chat.id === id);
+        return exists
+          ? prev.map((chat) => (chat.id === id ? updatedChat : chat))
+          : [updatedChat, ...prev];
+      });
+    }
+  }, [messages, appMode, activeChatId, activeBusinessChatId]);
+
   function newChat() {
     setMessages([]);
     setSelectedFiles([]);
     setInput("");
+    setShowHistory(false);
+
+    if (appMode === "business") {
+      setActiveBusinessChatId(null);
+    } else {
+      setActiveChatId(null);
+    }
   }
 
   function switchMode(mode) {
     setAppMode(mode);
     setSelectedFiles([]);
     setInput("");
+    setShowHistory(false);
+  }
+
+  function openChat(chat) {
+    setMessages(chat.messages || []);
+    setSelectedFiles([]);
+    setInput("");
+    setShowHistory(false);
+
+    if (appMode === "business") {
+      setActiveBusinessChatId(chat.id);
+    } else {
+      setActiveChatId(chat.id);
+    }
+  }
+
+  function deleteChat(chatId) {
+    if (appMode === "business") {
+      setBusinessHistory((prev) =>
+        prev.filter((chat) => chat.id !== chatId)
+      );
+
+      if (chatId === activeBusinessChatId) {
+        setBusinessMessages([]);
+        setActiveBusinessChatId(null);
+      }
+    } else {
+      setChatHistory((prev) =>
+        prev.filter((chat) => chat.id !== chatId)
+      );
+
+      if (chatId === activeChatId) {
+        setChatMessages([]);
+        setActiveChatId(null);
+      }
+    }
   }
 
   async function handleFileSelect(event) {
@@ -624,12 +749,78 @@ ${userMessage}`
               💼 Business
             </button>
 
+            <button
+              className="header-button"
+              onClick={() => setShowHistory((prev) => !prev)}
+            >
+              🗂️ History
+            </button>
+
             <button className="header-button" onClick={newChat}>
               🆕 New Chat
             </button>
           </div>
         </div>
       </header>
+
+      {showHistory && (
+        <aside className="history-panel">
+          <div className="history-header">
+            <h3>
+              {appMode === "business"
+                ? "Business History"
+                : "AI Chat History"}
+            </h3>
+
+            <button
+              className="history-close"
+              onClick={() => setShowHistory(false)}
+            >
+              ✕
+            </button>
+          </div>
+
+          {(appMode === "business"
+            ? businessHistory
+            : chatHistory
+          ).length === 0 ? (
+            <p className="history-empty">No chats yet.</p>
+          ) : (
+            <div className="history-list">
+              {(appMode === "business"
+                ? businessHistory
+                : chatHistory
+              )
+                .slice()
+                .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+                .map((chat) => (
+                  <div
+                    key={chat.id}
+                    className="history-item"
+                  >
+                    <button
+                      className="history-open"
+                      onClick={() => openChat(chat)}
+                    >
+                      <strong>{chat.title}</strong>
+                      <span>
+                        {chat.messages?.length || 0} messages
+                      </span>
+                    </button>
+
+                    <button
+                      className="history-delete"
+                      onClick={() => deleteChat(chat.id)}
+                      title="Delete chat"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                ))}
+            </div>
+          )}
+        </aside>
+      )}
 
       <main className="chat">
         {messages.length === 0 ? (
