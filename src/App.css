@@ -664,3 +664,27 @@ button {
   }
 }
 
+
+.brand h1 {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.brand-ai {
+  color: #4FD1FF;
+  font-weight: 800;
+}
+
+.business-tools-persistent {
+  margin: 10px 16px;
+  position: relative;
+  z-index: 5;
+}
+
+@media (max-width: 600px) {
+  .business-tools-persistent {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+

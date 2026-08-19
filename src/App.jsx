@@ -701,8 +701,7 @@ ${userMessage}`
             <div className="brand-icon">🐟</div>
 
             <div>
-              <h1>VikoP</h1>
-              <p>VikoAI</p>
+              <h1>VikoP <span className="brand-ai">AI</span></h1>
             </div>
           </div>
 
@@ -794,24 +793,6 @@ ${userMessage}`
                 <div className="robot">💼</div>
                 <h2>VikoP Business Assistant</h2>
                 <p>Your AI partner for smarter business decisions.</p>
-
-                <div className="business-tools">
-                  <button onClick={() => setInput("Create a marketing plan for my business")}>
-                    📣 Marketing Plan
-                  </button>
-
-                  <button onClick={() => setInput("Help me create a sales strategy")}>
-                    📈 Sales Strategy
-                  </button>
-
-                  <button onClick={() => setInput("Write a professional business email")}>
-                    ✉️ Business Email
-                  </button>
-
-                  <button onClick={() => setInput("Analyze my business idea and suggest improvements")}>
-                    💡 Business Idea
-                  </button>
-                </div>
               </>
             ) : (
               <>
@@ -822,6 +803,7 @@ ${userMessage}`
             )}
           </div>
         ) : (
+          messages.map((message, index) => (
           messages.map((message, index) => (
             <div
               key={index}
@@ -908,6 +890,26 @@ ${userMessage}`
           </div>
         )}
       </main>
+
+      {appMode === "business" && (
+        <div className="business-tools business-tools-persistent">
+          <button onClick={() => setInput("Create a marketing plan for my business")}>
+            📣 Marketing Plan
+          </button>
+
+          <button onClick={() => setInput("Help me create a sales strategy")}>
+            📈 Sales Strategy
+          </button>
+
+          <button onClick={() => setInput("Write a professional business email")}>
+            ✉️ Business Email
+          </button>
+
+          <button onClick={() => setInput("Analyze my business idea and suggest improvements")}>
+            💡 Business Idea
+          </button>
+        </div>
+      )}
 
       <div className="input-area">
         <input
