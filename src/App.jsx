@@ -4,6 +4,8 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import "./App.css";
+import BusinessDashboard from "./BusinessDashboard.jsx";
+import AuthPanel from "./AuthPanel.jsx";
 
 const CURRENT_CHAT_KEY = "vikop-current-chat";
 const BUSINESS_CHAT_KEY = "vikop-business-chat";
@@ -25,6 +27,29 @@ function getChatTitle(messages) {
 }
 
 function App() {
+  const [authToken, setAuthToken] = useState(() => {
+    try {
+      return localStorage.getItem("vikop-auth-token") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [showBusinessDashboard, setShowBusinessDashboard] = useState(false);
+
+  function handleLogin(token) {
+    setAuthToken(token);
+  }
+
+  function logoutBusiness() {
+    localStorage.removeItem("vikop-auth-token");
+    localStorage.removeItem("vikop-auth-user");
+    setAuthToken("");
+    setShowBusinessDashboard(false);
+  }
+
+
+
   const [chatMessages, setChatMessages] = useState(() => {
     try {
       const saved = localStorage.getItem(CURRENT_CHAT_KEY);
@@ -756,6 +781,19 @@ ${userMessage}`
 
     recognitionRef.current = recognition;
     recognition.start();
+  }
+
+  if (!authToken) {
+    return <AuthPanel onLogin={handleLogin} />;
+  }
+
+  if (showBusinessDashboard) {
+    return (
+      <BusinessDashboard
+        token={authToken}
+        onClose={() => setShowBusinessDashboard(false)}
+      />
+    );
   }
 
   return (

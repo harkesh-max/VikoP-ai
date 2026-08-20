@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { register, login } from "./auth.js";
+import { registerBusinessAIRoutes } from "./business-ai.js";
 
 dotenv.config();
 
@@ -20,6 +21,9 @@ const ai = new GoogleGenAI({});
 
 app.post("/api/auth/register", register);
 app.post("/api/auth/login", login);
+
+// Permanent VikoP Business AI routes
+registerBusinessAIRoutes(app);
 
 app.post("/chat", async (req, res) => {
   const { message, history = [] } = req.body;
