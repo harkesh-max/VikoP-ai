@@ -725,7 +725,8 @@ button {
 
 /* Extra bottom space so chat answers don't hide behind buttons */
 .business-tools-persistent ~ .input-area {
-  position: relative;
+  position: sticky;
+  bottom: 0;
   z-index: 30;
 }
 
