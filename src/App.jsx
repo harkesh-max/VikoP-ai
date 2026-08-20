@@ -50,6 +50,30 @@ function App() {
   const [appMode, setAppMode] = useState("chat");
   const [showHistory, setShowHistory] = useState(false);
 
+  const [businessKnowledge, setBusinessKnowledge] = useState(() => {
+    try {
+      return localStorage.getItem("vikop-business-knowledge") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const [industryMode, setIndustryMode] = useState(() => {
+    try {
+      return localStorage.getItem("vikop-industry-mode") || "general";
+    } catch {
+      return "general";
+    }
+  });
+
+  const [businessLeads, setBusinessLeads] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("vikop-business-leads") || "[]");
+    } catch {
+      return [];
+    }
+  });
+
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const saved = localStorage.getItem(CHAT_HISTORY_KEY);
@@ -107,6 +131,18 @@ function App() {
       console.error("Business chat save failed:", error);
     }
   }, [businessMessages]);
+
+  useEffect(() => {
+    localStorage.setItem("vikop-business-knowledge", businessKnowledge);
+  }, [businessKnowledge]);
+
+  useEffect(() => {
+    localStorage.setItem("vikop-industry-mode", industryMode);
+  }, [industryMode]);
+
+  useEffect(() => {
+    localStorage.setItem("vikop-business-leads", JSON.stringify(businessLeads));
+  }, [businessLeads]);
 
   useEffect(() => {
     localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory));
@@ -822,6 +858,52 @@ ${userMessage}`
         </aside>
       )}
 
+      {appMode === "business" && (
+        <section style={{
+          margin: "12px auto",
+          maxWidth: "900px",
+          width: "calc(100% - 24px)",
+          padding: "14px",
+          borderRadius: "14px",
+          background: "rgba(255,255,255,0.05)"
+        }}>
+          <div style={{display:"flex", gap:"10px", flexWrap:"wrap"}}>
+            <select
+              value={industryMode}
+              onChange={(e) => setIndustryMode(e.target.value)}
+              style={{padding:"9px", borderRadius:"8px"}}
+            >
+              <option value="general">General Business</option>
+              <option value="real estate">Real Estate</option>
+              <option value="gym and fitness">Gym & Fitness</option>
+              <option value="restaurant">Restaurant</option>
+              <option value="dental clinic">Dental Clinic</option>
+              <option value="salon and beauty">Salon & Beauty</option>
+              <option value="hotel">Hotel</option>
+              <option value="car dealership">Car Dealership</option>
+            </select>
+          </div>
+
+          <textarea
+            value={businessKnowledge}
+            onChange={(e) => setBusinessKnowledge(e.target.value)}
+            placeholder="Business Knowledge Base — company name, services, prices, opening hours, FAQs, policies, etc."
+            rows={5}
+            style={{
+              width:"100%",
+              marginTop:"10px",
+              padding:"10px",
+              borderRadius:"10px",
+              boxSizing:"border-box"
+            }}
+          />
+
+          <small>
+            VikoP will use this information when answering business questions.
+          </small>
+        </section>
+      )}
+
       <main className="chat">
         {messages.length === 0 ? (
           <div className="welcome">
@@ -928,22 +1010,188 @@ ${userMessage}`
       </main>
 
       {appMode === "business" && (
+        <div style={{
+          margin: "10px auto",
+          maxWidth: "900px",
+          width: "calc(100% - 24px)",
+          padding: "14px",
+          borderRadius: "14px",
+          background: "rgba(255,255,255,0.05)"
+        }}>
+          <h3 style={{marginTop:0}}>👥 Lead Workspace</h3>
+
+          <div style={{
+            display:"grid",
+            gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",
+            gap:"8px"
+          }}>
+            <input id="lead-name" placeholder="Lead name" />
+            <input id="lead-contact" placeholder="Email / phone" />
+            <select id="lead-status">
+              <option value="new">New</option>
+              <option value="warm">Warm</option>
+              <option value="hot">Hot</option>
+              <option value="cold">Cold</option>
+            </select>
+            <button onClick={() => {
+              const name = document.getElementById("lead-name")?.value.trim();
+              const contact = document.getElementById("lead-contact")?.value.trim();
+              const status = document.getElementById("lead-status")?.value || "new";
+
+              if (!name) {
+                alert("Lead name enter karo.");
+                return;
+              }
+
+              setBusinessLeads(prev => [
+                {
+                  id: Date.now().toString(),
+                  name,
+                  contact,
+                  status,
+                  createdAt: Date.now()
+                },
+                ...prev
+              ]);
+
+              document.getElementById("lead-name").value = "";
+              document.getElementById("lead-contact").value = "";
+            }}>
+              ➕ Add Lead
+            </button>
+          </div>
+
+          {businessLeads.length > 0 && (
+            <div style={{marginTop:"12px"}}>
+              {businessLeads.map((lead) => (
+                <div
+                  key={lead.id}
+                  style={{
+                    display:"flex",
+                    justifyContent:"space-between",
+                    alignItems:"center",
+                    gap:"10px",
+                    padding:"9px",
+                    marginTop:"6px",
+                    borderRadius:"8px",
+                    background:"rgba(255,255,255,0.04)"
+                  }}
+                >
+                  <div>
+                    <strong>{lead.name}</strong>
+                    <div>{lead.contact || "No contact"}</div>
+                    <small>Status: {lead.status}</small>
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      setBusinessLeads(prev =>
+                        prev.filter(item => item.id !== lead.id)
+                      )
+                    }
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {appMode === "business" && (
         <div className="business-tools business-tools-persistent">
-          <button onClick={() => setInput("Create a marketing plan for my business")}>
-            📣 Marketing Plan
-          </button>
-
-          <button onClick={() => setInput("Help me create a sales strategy")}>
-            📈 Sales Strategy
-          </button>
-
-          <button onClick={() => setInput("Write a professional business email")}>
-            ✉️ Business Email
-          </button>
-
-          <button onClick={() => setInput("Analyze my business idea and suggest improvements")}>
-            💡 Business Idea
-          </button>
+          {industryMode === "real estate" ? (
+            <>
+              <button onClick={() => setInput("Create a professional property listing description for this property")}>
+                🏠 Property Listing
+              </button>
+              <button onClick={() => setInput("Write a professional follow-up message for a real estate lead")}>
+                📩 Buyer Follow-up
+              </button>
+              <button onClick={() => setInput("Create a real estate marketing campaign to generate more leads")}>
+                📣 Lead Campaign
+              </button>
+              <button onClick={() => setInput("Analyze this property information and give me useful sales insights")}>
+                📊 Property Analysis
+              </button>
+            </>
+          ) : industryMode === "gym and fitness" ? (
+            <>
+              <button onClick={() => setInput("Create a gym membership promotion that attracts new customers")}>
+                🏋️ Membership Promo
+              </button>
+              <button onClick={() => setInput("Write a professional follow-up message for a gym lead")}>
+                📩 Lead Follow-up
+              </button>
+              <button onClick={() => setInput("Create a 30-day marketing plan for my gym")}>
+                📣 Gym Marketing
+              </button>
+              <button onClick={() => setInput("Create customer retention ideas for my gym")}>
+                ❤️ Retention Ideas
+              </button>
+            </>
+          ) : industryMode === "restaurant" ? (
+            <>
+              <button onClick={() => setInput("Create an attractive promotion for my restaurant")}>
+                🍔 Restaurant Promo
+              </button>
+              <button onClick={() => setInput("Write a professional response to this customer review")}>
+                ⭐ Review Reply
+              </button>
+              <button onClick={() => setInput("Create social media content ideas for my restaurant")}>
+                📱 Social Content
+              </button>
+              <button onClick={() => setInput("Improve these menu item descriptions to make them more appealing")}>
+                🍽️ Menu Content
+              </button>
+            </>
+          ) : industryMode === "dental clinic" ? (
+            <>
+              <button onClick={() => setInput("Create a professional patient FAQ for my dental clinic")}>
+                🦷 Patient FAQ
+              </button>
+              <button onClick={() => setInput("Write a professional appointment follow-up message")}>
+                📅 Appointment Follow-up
+              </button>
+              <button onClick={() => setInput("Create a marketing campaign for my dental clinic")}>
+                📣 Clinic Marketing
+              </button>
+              <button onClick={() => setInput("Create ideas to improve patient retention")}>
+                ❤️ Patient Retention
+              </button>
+            </>
+          ) : industryMode === "salon and beauty" ? (
+            <>
+              <button onClick={() => setInput("Create a promotion for my salon or beauty business")}>
+                💇 Service Promo
+              </button>
+              <button onClick={() => setInput("Write a professional customer follow-up message")}>
+                📩 Customer Follow-up
+              </button>
+              <button onClick={() => setInput("Create social media content ideas for my salon")}>
+                📱 Social Content
+              </button>
+              <button onClick={() => setInput("Create a customer retention strategy for my salon")}>
+                ❤️ Retention Strategy
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => setInput("Create a marketing plan for my business")}>
+                📣 Marketing Plan
+              </button>
+              <button onClick={() => setInput("Help me create a sales strategy")}>
+                📈 Sales Strategy
+              </button>
+              <button onClick={() => setInput("Write a professional business email")}>
+                ✉️ Business Email
+              </button>
+              <button onClick={() => setInput("Analyze my business idea and suggest improvements")}>
+                💡 Business Idea
+              </button>
+            </>
+          )}
         </div>
       )}
 
