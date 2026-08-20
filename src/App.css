@@ -757,3 +757,72 @@ button {
   }
 }
 
+
+/* VikoP AI - Auth form layout fix */
+.auth-panel {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 430px;
+  box-sizing: border-box;
+}
+
+.auth-card form {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 8px;
+}
+
+.auth-card form label {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.auth-card form input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 6px 0;
+}
+
+.auth-card .auth-submit {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+}
+
+.auth-card .auth-error {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+
+.auth-field {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  gap: 6px !important;
+  margin: 0 0 10px 0 !important;
+}
+
+.auth-field label {
+  display: block !important;
+  width: 100% !important;
+}
+
+.auth-field input {
+  display: block !important;
+  width: 100% !important;
+  flex: none !important;
+}
+
