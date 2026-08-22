@@ -1219,14 +1219,45 @@ ${userMessage}`
               <button onClick={() => setInput("Create a marketing plan for my business")}>
                 📣 Marketing Plan
               </button>
-              <button onClick={() => setInput("Help me create a sales strategy")}>
+
+              <button onClick={() => setInput("Help me create a professional sales strategy for my business")}>
                 📈 Sales Strategy
               </button>
-              <button onClick={() => setInput("Write a professional business email")}>
+
+              <button onClick={() => setInput("Write a professional business email for my company")}>
                 ✉️ Business Email
               </button>
-              <button onClick={() => setInput("Analyze my business idea and suggest improvements")}>
+
+              <button onClick={() => setInput("Analyze my business idea and suggest improvements, risks and opportunities")}>
                 💡 Business Idea
+              </button>
+
+              <button onClick={() => setInput("Act as my Customer Support AI. Draft a professional response to the customer's message using only verified company information: ")}>
+                🎧 Customer Support AI
+              </button>
+
+              <button onClick={() => setInput("Use my company knowledge and business information as the source of truth for this request. Do not invent company facts. My request is: ")}>
+                🧠 Business Knowledge / Company Memory
+              </button>
+
+              <button onClick={() => setInput("Analyze the following business data. Identify important trends, totals, comparisons, risks and actionable insights. Use only the supplied data: ")}>
+                📊 Business Data Analyst
+              </button>
+
+              <button onClick={() => setInput("Create professional social media marketing content for my business. Include platform-appropriate copy, a call to action and suitable hashtags when appropriate. Topic: ")}>
+                📱 Social Media Marketing AI
+              </button>
+
+              <button onClick={() => setInput("Generate a professional business document. Document type: [type]. Purpose: [purpose]. Use verified business information and clearly mark any missing information that needs confirmation.")}>
+                📄 Business Document Generator
+              </button>
+
+              <button onClick={() => setInput("Research this business topic using current live web information and provide a concise, source-aware answer: ")}>
+                🌐 Web Search / Live Information
+              </button>
+
+              <button onClick={() => setInput("Analyze the attached PDF document. Summarize the key information, figures, dates, obligations, risks and action items. Use only information contained in the PDF.")}>
+                📑 PDF Document AI
               </button>
             </>
           )}
