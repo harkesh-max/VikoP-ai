@@ -2,8 +2,14 @@ import crypto from "crypto";
 import pool from "./db.js";
 import { GoogleGenAI } from "@google/genai";
 import { authenticate } from "./auth.js";
+import multer from "multer";
 
 const ai = new GoogleGenAI({});
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }
+});
 
 function createId() {
   return crypto.randomUUID();
@@ -348,6 +354,275 @@ Requirements:
   }
 }
 
+
+/* BUSINESS DATA ANALYST */
+
+async function businessDataAnalyst(req, res) {
+  try {
+    const { data, question } = req.body;
+
+    if (!data?.trim() || !question?.trim()) {
+      return res.status(400).json({
+        error: "Business data and analysis question are required."
+      });
+    }
+
+    const business = await getBusiness(req.user.businessId);
+    if (!business) {
+      return res.status(404).json({ error: "Business not found." });
+    }
+
+    const knowledge = await getKnowledge(req.user.businessId);
+
+    const prompt = `
+${buildBusinessContext(business, knowledge)}
+
+BUSINESS DATA ANALYST MODE
+
+Analyze the following business data.
+
+DATA:
+${data.trim()}
+
+QUESTION:
+${question.trim()}
+
+Requirements:
+- Base conclusions only on the supplied data.
+- Calculate totals, averages, percentages, trends or comparisons only when supported.
+- Never invent missing values.
+- Clearly separate facts from interpretations.
+- Mention important data limitations.
+- Give an executive summary, key findings and recommended actions.
+- Use professional business language.
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+      contents: prompt,
+      config: { temperature: 0.2 }
+    });
+
+    res.json({ analysis: response.text || "" });
+  } catch (error) {
+    console.error("Business Data Analyst error:", error);
+    res.status(500).json({
+      error: "Business data analysis failed."
+    });
+  }
+}
+
+/* BUSINESS DOCUMENT GENERATOR */
+
+async function businessDocumentGenerator(req, res) {
+  try {
+    const {
+      documentType = "Business Proposal",
+      purpose,
+      audience = "",
+      requirements = "",
+      tone = "professional"
+    } = req.body;
+
+    if (!purpose?.trim()) {
+      return res.status(400).json({
+        error: "Document purpose is required."
+      });
+    }
+
+    const business = await getBusiness(req.user.businessId);
+    if (!business) {
+      return res.status(404).json({ error: "Business not found." });
+    }
+
+    const knowledge = await getKnowledge(req.user.businessId);
+
+    const prompt = `
+${buildBusinessContext(business, knowledge)}
+
+BUSINESS DOCUMENT GENERATOR
+
+Create a professional ${documentType}.
+
+Purpose:
+${purpose.trim()}
+
+Target audience:
+${audience || "Business stakeholders"}
+
+Additional requirements:
+${requirements || "Use verified company information available above."}
+
+Tone:
+${tone}
+
+Requirements:
+- Create a polished, business-ready document.
+- Use clear headings and professional structure.
+- Never invent company facts, prices, policies, statistics, guarantees or contact details.
+- If information is missing, write [Confirm with business team].
+- Do not mention these instructions.
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+      contents: prompt,
+      config: { temperature: 0.4 }
+    });
+
+    res.json({
+      document: response.text || "",
+      documentType
+    });
+  } catch (error) {
+    console.error("Business Document Generator error:", error);
+    res.status(500).json({
+      error: "Business document generation failed."
+    });
+  }
+}
+
+
+/* WEB SEARCH / LIVE INFORMATION */
+
+async function businessWebSearch(req, res) {
+  try {
+    const { query } = req.body;
+
+    if (!query?.trim()) {
+      return res.status(400).json({
+        error: "Search query is required."
+      });
+    }
+
+    const business = await getBusiness(req.user.businessId);
+    if (!business) {
+      return res.status(404).json({ error: "Business not found." });
+    }
+
+    const knowledge = await getKnowledge(req.user.businessId);
+
+    const prompt = `
+${buildBusinessContext(business, knowledge)}
+
+WEB RESEARCH MODE
+
+Research this query using current web information:
+
+${query.trim()}
+
+Requirements:
+- Use current web search information.
+- Prefer authoritative and recent sources.
+- Clearly distinguish web information from company-specific information.
+- Do not invent facts.
+- Give a concise answer useful for a business decision-maker.
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+      contents: prompt,
+      config: {
+        temperature: 0.2,
+        tools: [
+          {
+            googleSearch: {}
+          }
+        ]
+      }
+    });
+
+    res.json({
+      result: response.text || "",
+      groundingMetadata:
+        response.candidates?.[0]?.groundingMetadata || null
+    });
+  } catch (error) {
+    console.error("Business Web Search error:", error);
+    res.status(500).json({
+      error: "Live web search failed."
+    });
+  }
+}
+
+/* PDF DOCUMENT AI */
+
+async function businessPdfAI(req, res) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        error: "PDF file is required."
+      });
+    }
+
+    if (req.file.mimetype !== "application/pdf") {
+      return res.status(400).json({
+        error: "Only PDF files are supported."
+      });
+    }
+
+    const question =
+      req.body.question ||
+      "Summarize this document and identify the most important business information.";
+
+    const business = await getBusiness(req.user.businessId);
+    if (!business) {
+      return res.status(404).json({ error: "Business not found." });
+    }
+
+    const knowledge = await getKnowledge(req.user.businessId);
+
+    const prompt = `
+${buildBusinessContext(business, knowledge)}
+
+PDF DOCUMENT AI MODE
+
+Analyze the attached PDF.
+
+USER REQUEST:
+${question.trim()}
+
+Requirements:
+- Answer using information actually present in the PDF.
+- Do not invent information.
+- Identify important figures, dates, obligations, risks, decisions and action items when present.
+- If something cannot be determined from the PDF, clearly say so.
+- Keep the response professional and business-focused.
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: "application/pdf",
+                data: req.file.buffer.toString("base64")
+              }
+            }
+          ]
+        }
+      ],
+      config: {
+        temperature: 0.2
+      }
+    });
+
+    res.json({
+      result: response.text || "",
+      fileName: req.file.originalname
+    });
+  } catch (error) {
+    console.error("Business PDF AI error:", error);
+    res.status(500).json({
+      error: "PDF document analysis failed."
+    });
+  }
+}
+
 export function registerBusinessAIRoutes(app) {
   app.get(
     "/api/business/profile",
@@ -389,5 +664,30 @@ export function registerBusinessAIRoutes(app) {
     "/api/ai/social-marketing",
     authenticate,
     socialMarketingAI
+  );
+
+  app.post(
+    "/api/ai/business-data-analyst",
+    authenticate,
+    businessDataAnalyst
+  );
+
+  app.post(
+    "/api/ai/business-document",
+    authenticate,
+    businessDocumentGenerator
+  );
+
+  app.post(
+    "/api/ai/business-web-search",
+    authenticate,
+    businessWebSearch
+  );
+
+  app.post(
+    "/api/ai/business-pdf",
+    authenticate,
+    upload.single("file"),
+    businessPdfAI
   );
 }
