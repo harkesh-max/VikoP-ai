@@ -36,6 +36,7 @@ function App() {
   });
 
   const [showBusinessDashboard, setShowBusinessDashboard] = useState(false);
+  const [showCRM, setShowCRM] = useState(false);
 
   function handleLogin(token) {
     setAuthToken(token);
@@ -73,7 +74,12 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [listening, setListening] = useState(false);
   const [appMode, setAppMode] = useState("chat");
-  const [showHistory, setShowHistory] = useState(false);
+  const [showBusinessTools, setShowBusinessTools] = useState(true);
+
+  function selectBusinessTool(prompt) {
+    setInput(prompt);
+    setShowBusinessTools(true);
+  }
 
   const [businessKnowledge, setBusinessKnowledge] = useState(() => {
     try {
@@ -132,6 +138,10 @@ function App() {
   }
 
   const fileInputRef = useRef(null);
+
+  function openFilePicker() {
+    fileInputRef.current?.click();
+  }
   const userMessageRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -231,7 +241,6 @@ function App() {
     setMessages([]);
     setSelectedFiles([]);
     setInput("");
-    setShowHistory(false);
 
     if (appMode === "business") {
       setActiveBusinessChatId(null);
@@ -244,14 +253,12 @@ function App() {
     setAppMode(mode);
     setSelectedFiles([]);
     setInput("");
-    setShowHistory(false);
   }
 
   function openChat(chat) {
     setMessages(chat.messages || []);
     setSelectedFiles([]);
     setInput("");
-    setShowHistory(false);
 
     if (appMode === "business") {
       setActiveBusinessChatId(chat.id);
@@ -417,8 +424,8 @@ function App() {
           }
 
           if (isPDF) {
-            if (file.size > 20 * 1024 * 1024) {
-              throw new Error("PDF 20 MB se badi hai.");
+            if (file.size > 50 * 1024 * 1024) {
+              throw new Error("PDF 50 MB se badi hai.");
             }
 
             return await new Promise((resolve, reject) => {
@@ -689,12 +696,23 @@ For international users, use clear professional English when the user writes in 
 Do not pretend to be a lawyer, accountant or financial adviser; clearly mention when professional advice is needed.` 
         : "";
 
-    const aiMessage = modeInstruction
-      ? `${modeInstruction}
+    const businessKnowledgeInstruction =
+      appMode === "business" && businessKnowledge.trim()
+        ? `BUSINESS KNOWLEDGE — SOURCE OF TRUTH:
+Use the following company information as the primary source of truth for factual questions about this business.
+If the user asks for a fact that is explicitly present here, answer that fact directly and precisely.
+Do not replace a known company fact with generic advice or explanations.
+Do not invent or modify company details.
+If the requested fact is not present here, say that it is not available in the saved company information.
 
-USER REQUEST:
-${userMessage}`
-      : userMessage;
+${businessKnowledge.trim()}`
+        : "";
+
+    const aiMessage = [modeInstruction, businessKnowledgeInstruction]
+      .filter(Boolean)
+      .join("\n\n") + (modeInstruction || businessKnowledgeInstruction
+        ? `\n\nUSER REQUEST:\n${userMessage}`
+        : userMessage);
 
     await requestAI(
       aiMessage,
@@ -824,123 +842,37 @@ ${userMessage}`
             </button>
 
             <button
-              className="header-button"
-              onClick={() => setShowHistory((prev) => !prev)}
+              className={`header-button ${showCRM ? "mode-active" : ""}`}
+              onClick={() => setShowCRM((prev) => !prev)}
             >
-              🗂️ History
+              🤝 CRM & Leads
             </button>
 
             <button className="header-button" onClick={newChat}>
               🆕 New Chat
             </button>
+
+            <button
+              className="header-button"
+              onClick={() => {
+                const user = JSON.parse(
+                  localStorage.getItem("vikop-auth-user") || "null"
+                );
+
+                const message = user
+                  ? `Logged in as ${user.name || user.email}`
+                  : "Logged in";
+
+                if (window.confirm(`${message}\n\nDo you want to logout?`)) {
+                  logoutBusiness();
+                }
+              }}
+            >
+              👤 Logout
+            </button>
           </div>
         </div>
       </header>
-
-      {showHistory && (
-        <aside className="history-panel">
-          <div className="history-header">
-            <h3>
-              {appMode === "business"
-                ? "Business History"
-                : "AI Chat History"}
-            </h3>
-
-            <button
-              className="history-close"
-              onClick={() => setShowHistory(false)}
-            >
-              ✕
-            </button>
-          </div>
-
-          {(appMode === "business"
-            ? businessHistory
-            : chatHistory
-          ).length === 0 ? (
-            <p className="history-empty">No chats yet.</p>
-          ) : (
-            <div className="history-list">
-              {(appMode === "business"
-                ? businessHistory
-                : chatHistory
-              )
-                .slice()
-                .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-                .map((chat) => (
-                  <div
-                    key={chat.id}
-                    className="history-item"
-                  >
-                    <button
-                      className="history-open"
-                      onClick={() => openChat(chat)}
-                    >
-                      <strong>{chat.title}</strong>
-                      <span>
-                        {chat.messages?.length || 0} messages
-                      </span>
-                    </button>
-
-                    <button
-                      className="history-delete"
-                      onClick={() => deleteChat(chat.id)}
-                      title="Delete chat"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                ))}
-            </div>
-          )}
-        </aside>
-      )}
-
-      {appMode === "business" && (
-        <section style={{
-          margin: "12px auto",
-          maxWidth: "900px",
-          width: "calc(100% - 24px)",
-          padding: "14px",
-          borderRadius: "14px",
-          background: "rgba(255,255,255,0.05)"
-        }}>
-          <div style={{display:"flex", gap:"10px", flexWrap:"wrap"}}>
-            <select
-              value={industryMode}
-              onChange={(e) => setIndustryMode(e.target.value)}
-              style={{padding:"9px", borderRadius:"8px"}}
-            >
-              <option value="general">General Business</option>
-              <option value="real estate">Real Estate</option>
-              <option value="gym and fitness">Gym & Fitness</option>
-              <option value="restaurant">Restaurant</option>
-              <option value="dental clinic">Dental Clinic</option>
-              <option value="salon and beauty">Salon & Beauty</option>
-              <option value="hotel">Hotel</option>
-              <option value="car dealership">Car Dealership</option>
-            </select>
-          </div>
-
-          <textarea
-            value={businessKnowledge}
-            onChange={(e) => setBusinessKnowledge(e.target.value)}
-            placeholder="Business Knowledge Base — company name, services, prices, opening hours, FAQs, policies, etc."
-            rows={5}
-            style={{
-              width:"100%",
-              marginTop:"10px",
-              padding:"10px",
-              borderRadius:"10px",
-              boxSizing:"border-box"
-            }}
-          />
-
-          <small>
-            VikoP will use this information when answering business questions.
-          </small>
-        </section>
-      )}
 
       <main className="chat">
         {messages.length === 0 ? (
@@ -973,31 +905,31 @@ ${userMessage}`
             >
               {message.role === "assistant" ? (
                 <>
-                 <ReactMarkdown
-  remarkPlugins={[remarkMath]}
-  rehypePlugins={[rehypeKatex]}
->
-  {message.text}
-</ReactMarkdown>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
+                  >
+                    {message.text}
+                  </ReactMarkdown>
 
                   {message.text &&
                     index === messages.length - 1 && (
                       <div className="answer-actions">
-<button
-  className="copy-button"
-  onClick={async (e) => {
-    const success = await copyAnswer(message.text);
+                        <button
+                          className="copy-button"
+                          onClick={async (e) => {
+                            const success = await copyAnswer(message.text);
 
-    if (success) {
-      e.currentTarget.textContent = "✓ Copied";
-      setTimeout(() => {
-        e.currentTarget.textContent = "📋 Copy";
-      }, 2000);
-    }
-  }}
->
-  📋 Copy
-</button>
+                            if (success) {
+                              e.currentTarget.textContent = "✓ Copied";
+                              setTimeout(() => {
+                                e.currentTarget.textContent = "📋 Copy";
+                              }, 2000);
+                            }
+                          }}
+                        >
+                          📋 Copy
+                        </button>
 
                         <button
                           className="regenerate-button"
@@ -1047,242 +979,42 @@ ${userMessage}`
         )}
       </main>
 
-      {appMode === "business" && (
-        <div style={{
-          margin: "10px auto",
-          maxWidth: "900px",
-          width: "calc(100% - 24px)",
-          padding: "14px",
-          borderRadius: "14px",
-          background: "rgba(255,255,255,0.05)"
-        }}>
-          <h3 style={{marginTop:0}}>👥 Lead Workspace</h3>
-
-          <div style={{
-            display:"grid",
-            gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",
-            gap:"8px"
-          }}>
-            <input id="lead-name" placeholder="Lead name" />
-            <input id="lead-contact" placeholder="Email / phone" />
-            <select id="lead-status">
-              <option value="new">New</option>
-              <option value="warm">Warm</option>
-              <option value="hot">Hot</option>
-              <option value="cold">Cold</option>
-            </select>
-            <button onClick={() => {
-              const name = document.getElementById("lead-name")?.value.trim();
-              const contact = document.getElementById("lead-contact")?.value.trim();
-              const status = document.getElementById("lead-status")?.value || "new";
-
-              if (!name) {
-                alert("Lead name enter karo.");
-                return;
-              }
-
-              setBusinessLeads(prev => [
-                {
-                  id: Date.now().toString(),
-                  name,
-                  contact,
-                  status,
-                  createdAt: Date.now()
-                },
-                ...prev
-              ]);
-
-              document.getElementById("lead-name").value = "";
-              document.getElementById("lead-contact").value = "";
-            }}>
-              ➕ Add Lead
-            </button>
-          </div>
-
-          {businessLeads.length > 0 && (
-            <div style={{marginTop:"12px"}}>
-              {businessLeads.map((lead) => (
-                <div
-                  key={lead.id}
-                  style={{
-                    display:"flex",
-                    justifyContent:"space-between",
-                    alignItems:"center",
-                    gap:"10px",
-                    padding:"9px",
-                    marginTop:"6px",
-                    borderRadius:"8px",
-                    background:"rgba(255,255,255,0.04)"
-                  }}
-                >
-                  <div>
-                    <strong>{lead.name}</strong>
-                    <div>{lead.contact || "No contact"}</div>
-                    <small>Status: {lead.status}</small>
-                  </div>
-
-                  <button
-                    onClick={() =>
-                      setBusinessLeads(prev =>
-                        prev.filter(item => item.id !== lead.id)
-                      )
-                    }
-                  >
-                    🗑️
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {appMode === "business" && (
-        <div className="business-tools business-tools-persistent">
-          {industryMode === "real estate" ? (
-            <>
-              <button onClick={() => setInput("Create a professional property listing description for this property")}>
-                🏠 Property Listing
-              </button>
-              <button onClick={() => setInput("Write a professional follow-up message for a real estate lead")}>
-                📩 Buyer Follow-up
-              </button>
-              <button onClick={() => setInput("Create a real estate marketing campaign to generate more leads")}>
-                📣 Lead Campaign
-              </button>
-              <button onClick={() => setInput("Analyze this property information and give me useful sales insights")}>
-                📊 Property Analysis
-              </button>
-            </>
-          ) : industryMode === "gym and fitness" ? (
-            <>
-              <button onClick={() => setInput("Create a gym membership promotion that attracts new customers")}>
-                🏋️ Membership Promo
-              </button>
-              <button onClick={() => setInput("Write a professional follow-up message for a gym lead")}>
-                📩 Lead Follow-up
-              </button>
-              <button onClick={() => setInput("Create a 30-day marketing plan for my gym")}>
-                📣 Gym Marketing
-              </button>
-              <button onClick={() => setInput("Create customer retention ideas for my gym")}>
-                ❤️ Retention Ideas
-              </button>
-            </>
-          ) : industryMode === "restaurant" ? (
-            <>
-              <button onClick={() => setInput("Create an attractive promotion for my restaurant")}>
-                🍔 Restaurant Promo
-              </button>
-              <button onClick={() => setInput("Write a professional response to this customer review")}>
-                ⭐ Review Reply
-              </button>
-              <button onClick={() => setInput("Create social media content ideas for my restaurant")}>
-                📱 Social Content
-              </button>
-              <button onClick={() => setInput("Improve these menu item descriptions to make them more appealing")}>
-                🍽️ Menu Content
-              </button>
-            </>
-          ) : industryMode === "dental clinic" ? (
-            <>
-              <button onClick={() => setInput("Create a professional patient FAQ for my dental clinic")}>
-                🦷 Patient FAQ
-              </button>
-              <button onClick={() => setInput("Write a professional appointment follow-up message")}>
-                📅 Appointment Follow-up
-              </button>
-              <button onClick={() => setInput("Create a marketing campaign for my dental clinic")}>
-                📣 Clinic Marketing
-              </button>
-              <button onClick={() => setInput("Create ideas to improve patient retention")}>
-                ❤️ Patient Retention
-              </button>
-            </>
-          ) : industryMode === "salon and beauty" ? (
-            <>
-              <button onClick={() => setInput("Create a promotion for my salon or beauty business")}>
-                💇 Service Promo
-              </button>
-              <button onClick={() => setInput("Write a professional customer follow-up message")}>
-                📩 Customer Follow-up
-              </button>
-              <button onClick={() => setInput("Create social media content ideas for my salon")}>
-                📱 Social Content
-              </button>
-              <button onClick={() => setInput("Create a customer retention strategy for my salon")}>
-                ❤️ Retention Strategy
-              </button>
-            </>
-          ) : (
-            <>
-              <button onClick={() => setInput("Create a marketing plan for my business")}>
-                📣 Marketing Plan
-              </button>
-
-              <button onClick={() => setInput("Help me create a professional sales strategy for my business")}>
-                📈 Sales Strategy
-              </button>
-
-              <button onClick={() => setInput("Write a professional business email for my company")}>
-                ✉️ Business Email
-              </button>
-
-              <button onClick={() => setInput("Analyze my business idea and suggest improvements, risks and opportunities")}>
-                💡 Business Idea
-              </button>
-
-              <button onClick={() => setInput("Act as my Customer Support AI. Draft a professional response to the customer's message using only verified company information: ")}>
-                🎧 Customer Support AI
-              </button>
-
-              <button onClick={() => setInput("Use my company knowledge and business information as the source of truth for this request. Do not invent company facts. My request is: ")}>
-                🧠 Business Knowledge / Company Memory
-              </button>
-
-              <button onClick={() => setInput("Analyze the following business data. Identify important trends, totals, comparisons, risks and actionable insights. Use only the supplied data: ")}>
-                📊 Business Data Analyst
-              </button>
-
-              <button onClick={() => setInput("Create professional social media marketing content for my business. Include platform-appropriate copy, a call to action and suitable hashtags when appropriate. Topic: ")}>
-                📱 Social Media Marketing AI
-              </button>
-
-              <button onClick={() => setInput("Generate a professional business document. Document type: [type]. Purpose: [purpose]. Use verified business information and clearly mark any missing information that needs confirmation.")}>
-                📄 Business Document Generator
-              </button>
-
-              <button onClick={() => setInput("Research this business topic using current live web information and provide a concise, source-aware answer: ")}>
-                🌐 Web Search / Live Information
-              </button>
-
-              <button onClick={() => setInput("Analyze the attached PDF document. Summarize the key information, figures, dates, obligations, risks and action items. Use only information contained in the PDF.")}>
-                📑 PDF Document AI
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
       <div className="input-area">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="*/*"
-          onChange={handleFileSelect}
-          style={{ display: "none" }}
-        />
+        <div className="attachment-control">
+          <button
+            type="button"
+            className="tool-button attachment-label"
+            title="Attach files"
+            aria-label="Attach files"
+            onClick={openFilePicker}
+          >
+            📎
+          </button>
 
-        <button
-          type="button"
-          className="tool-button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={loading}
-          title="Attach files"
-        >
-          📎
-        </button>
+          <input
+            id="vikop-file-input"
+            ref={fileInputRef}
+            className="attachment-input-hidden"
+            type="file"
+            multiple
+            accept="*/*"
+            onChange={async (event) => {
+              try {
+                await handleFileSelect(event);
+              } finally {
+                event.target.value = "";
+
+                setTimeout(() => {
+                  restoreFilePickerLayout();
+                }, 80);
+              }
+            }}
+            onCancel={() => {
+              restoreFilePickerLayout();
+            }}
+            aria-label="Attach files"
+          />
+        </div>
 
         <div className="input-column">
           {selectedFiles.length > 0 && (
