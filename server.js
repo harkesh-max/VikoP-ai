@@ -11,7 +11,7 @@ dotenv.config();
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "75mb" }));
 app.use(express.static("dist"));
 
 app.get("/", (req, res) => {
@@ -27,7 +27,14 @@ app.post("/api/auth/login", login);
 registerBusinessAIRoutes(app);
 
 app.post("/chat", async (req, res) => {
-  const { message, history = [] } = req.body;
+  const {
+    message,
+    history = [],
+    attachments = [],
+    businessKnowledge = "",
+    industryMode = "",
+    businessMode = false
+  } = req.body;
 
   if (!message && history.length === 0) {
     return res.status(400).json({ error: "Message is required" });
@@ -39,9 +46,10 @@ app.post("/chat", async (req, res) => {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    const contents = history
-      .filter((item) => item && item.role)
-      .map((item) => {
+    const contents = [
+      ...history
+        .filter((item) => item && item.role)
+        .map((item) => {
         const parts = [];
 
         if (item.text && item.text.trim()) {
@@ -65,7 +73,46 @@ app.post("/chat", async (req, res) => {
           role: item.role === "assistant" ? "model" : "user",
           parts
         };
-      });
+        }),
+      ...(message?.trim() || Array.isArray(attachments) && attachments.length > 0
+        ? [{
+            role: "user",
+            parts: [
+              ...(message?.trim()
+                ? [{
+                    text:
+                      businessMode && String(businessKnowledge || "").trim()
+                        ? (
+                            "IMPORTANT BUSINESS KNOWLEDGE INSTRUCTION:\n" +
+                            "Before answering the user's request, read the BUSINESS KNOWLEDGE below carefully.\n" +
+                            "If the user's question asks for a business-specific fact that is present below, answer DIRECTLY using that information.\n" +
+                            "Do not replace it with general knowledge. Do not invent another value.\n" +
+                            "For simple factual questions, give the exact business fact first and keep the answer concise.\n\n" +
+                            "===== BUSINESS KNOWLEDGE =====\n" +
+                            String(businessKnowledge).trim() +
+                            "\n===== END BUSINESS KNOWLEDGE =====\n\n" +
+                            "USER REQUEST:\n" +
+                            message.trim()
+                          )
+                        : message.trim()
+                  }]
+                : []),
+              ...(
+                Array.isArray(attachments)
+                  ? attachments
+                      .filter((file) => file?.data && file?.mimeType)
+                      .map((file) => ({
+                        inlineData: {
+                          mimeType: file.mimeType,
+                          data: file.data
+                        }
+                      }))
+                  : []
+              )
+            ]
+          }]
+        : [])
+    ];
 
     // User ki important personal information ko history se detect karo
     let rememberedName = "";
@@ -92,10 +139,49 @@ let memoryInstruction =
   "Never claim that you do not know something if it is clearly present in the history. " +
   "Remember useful information the user has explicitly told you and use it naturally. " +
   "For currency, use the currency appropriate to the user and context. For Indian Rupees or India-related prices, always write Rs. like Rs. 500 and never use the $ symbol. If the user explicitly asks for US Dollars or a foreign currency, use that requested currency symbol such as $ for USD, £ for GBP, or € for EUR. Never convert or change a currency unless the user asks for conversion. " +
-"Use LaTeX only for actual mathematical expressions, never for currency.";
+  "Use LaTeX only for actual mathematical expressions, never for currency.";
+
+    if (businessMode && String(businessKnowledge || "").trim()) {
+      memoryInstruction +=
+        " You are operating in BUSINESS ASSISTANT MODE. " +
+        `The business industry is "${String(industryMode || "general business")}". ` +
+        "The Business Knowledge Base below is the PRIMARY SOURCE OF TRUTH for this business. " +
+        "When the user asks about business-specific prices, opening hours, services, policies, fees, FAQs, contact details, or other facts present in this knowledge, answer DIRECTLY from the knowledge base. " +
+        "Do not invent or contradict information from the knowledge base. " +
+        "Do not give a generic explanation when the requested fact is explicitly present. " +
+        "Keep factual answers concise and direct. " +
+        "If a requested business fact is not present, say that the information is not available in the Business Knowledge Base rather than making it up. " +
+        "\n\n===== BUSINESS KNOWLEDGE BASE =====\n" +
+        String(businessKnowledge).trim() +
+        "\n===== END BUSINESS KNOWLEDGE BASE =====\n";
+    }
+
     if (rememberedName) {
       memoryInstruction +=
         ` The user's name is "${rememberedName}". Remember this and use it when appropriate.`;
+    }
+
+    if (businessMode) {
+      memoryInstruction += `
+
+BUSINESS ASSISTANT MODE
+The user is currently using VikoP Business mode.
+
+Industry:
+${industryMode || "General Business"}
+
+BUSINESS KNOWLEDGE PROVIDED BY THE USER:
+${businessKnowledge?.trim() || "No business knowledge has been provided."}
+
+CRITICAL BUSINESS KNOWLEDGE RULES:
+- Carefully read the BUSINESS KNOWLEDGE before answering.
+- If the user's question can be answered directly from the BUSINESS KNOWLEDGE, answer using that exact information.
+- Do NOT ignore, replace, or contradict the BUSINESS KNOWLEDGE.
+- Do NOT invent business prices, timings, services, policies, fees, offers, or other company facts.
+- If a requested fact is present in BUSINESS KNOWLEDGE, give that fact directly and clearly.
+- If the information is missing, say that the business information has not been provided.
+- For simple factual questions such as "What is restaurant timing?" give the direct answer first. Do not give unnecessary disclaimers or generic business advice.
+`;
     }
 
     const stream = await ai.models.generateContentStream({
@@ -173,11 +259,14 @@ const PORT = process.env.PORT || 3001;
 
 initializeDatabase()
   .then(() => {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`AI server running on port ${PORT}`);
-    });
+    console.log("Database initialization completed.");
   })
   .catch((error) => {
     console.error("Database initialization failed:", error);
-    process.exit(1);
+    console.warn("Starting AI server without database initialization.");
+  })
+  .finally(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`AI server running on port ${PORT}`);
+    });
   });

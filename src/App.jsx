@@ -74,6 +74,7 @@ function App() {
   const [listening, setListening] = useState(false);
   const [appMode, setAppMode] = useState("chat");
   const [showHistory, setShowHistory] = useState(false);
+  const [showBusinessCRM, setShowBusinessCRM] = useState(false);
 
   const [businessKnowledge, setBusinessKnowledge] = useState(() => {
     try {
@@ -120,6 +121,66 @@ function App() {
   const [activeChatId, setActiveChatId] = useState(null);
   const [activeBusinessChatId, setActiveBusinessChatId] = useState(null);
 
+
+  function normalizeLeadContact(contact) {
+    const value = (contact || "").trim().toLowerCase();
+
+    if (!value) return "";
+
+    if (value.includes("@")) {
+      return value.replace(/\s+/g, "");
+    }
+
+    return value.replace(/\D/g, "");
+  }
+
+  function addBusinessLead(name, contact, status) {
+    const cleanName = (name || "").trim();
+    const cleanContact = (contact || "").trim();
+    const normalizedContact = normalizeLeadContact(cleanContact);
+
+    if (!cleanName) {
+      alert("Lead name enter karo.");
+      return false;
+    }
+
+    let added = false;
+    let duplicate = false;
+
+    setBusinessLeads((prev) => {
+      if (
+        normalizedContact &&
+        prev.some(
+          (lead) =>
+            normalizeLeadContact(lead.contact) === normalizedContact
+        )
+      ) {
+        duplicate = true;
+        return prev;
+      }
+
+      added = true;
+
+      return [
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: cleanName,
+          contact: cleanContact,
+          status: status || "new",
+          createdAt: Date.now()
+        },
+        ...prev
+      ];
+    });
+
+    if (duplicate) {
+      alert("This lead already exists.");
+      return false;
+    }
+
+    return added;
+  }
+
   const messages =
     appMode === "business" ? businessMessages : chatMessages;
 
@@ -132,6 +193,8 @@ function App() {
   }
 
   const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
   const userMessageRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -245,6 +308,9 @@ function App() {
     setSelectedFiles([]);
     setInput("");
     setShowHistory(false);
+    if (mode !== "business") {
+      setShowBusinessCRM(false);
+    }
   }
 
   function openChat(chat) {
@@ -417,8 +483,8 @@ function App() {
           }
 
           if (isPDF) {
-            if (file.size > 20 * 1024 * 1024) {
-              throw new Error("PDF 20 MB se badi hai.");
+            if (file.size > 40 * 1024 * 1024) {
+              throw new Error("PDF 40 MB se badi hai.");
             }
 
             return await new Promise((resolve, reject) => {
@@ -510,6 +576,18 @@ function App() {
     setMessages(displayMessages);
 
     try {
+      const compactHistory = Array.isArray(historyForRequest)
+        ? historyForRequest.map((item) => ({
+            ...item,
+            attachments: Array.isArray(item.attachments)
+              ? item.attachments.map((file) => ({
+                  name: file.name,
+                  mimeType: file.mimeType
+                }))
+              : []
+          }))
+        : [];
+
       const response = await fetch("/chat", {
         method: "POST",
         headers: {
@@ -517,8 +595,11 @@ function App() {
         },
         body: JSON.stringify({
           message: userMessage,
-          history: historyForRequest,
-          attachments: attachmentsForRequest
+          history: compactHistory,
+          attachments: attachmentsForRequest,
+          businessKnowledge: appMode === "business" ? businessKnowledge : "",
+          industryMode: appMode === "business" ? industryMode : "",
+          businessMode: appMode === "business"
         })
       });
 
@@ -797,7 +878,7 @@ ${userMessage}`
   }
 
   return (
-    <div className="app">
+    <div className={`app ${appMode === "business" ? "app-business" : ""}`}>
       <header className="header">
         <div className="header-top">
           <div className="brand">
@@ -939,6 +1020,112 @@ ${userMessage}`
           <small>
             VikoP will use this information when answering business questions.
           </small>
+
+          <div className="business-section-actions">
+            <button
+              type="button"
+              className={`business-crm-toggle ${showBusinessCRM ? "active" : ""}`}
+              onClick={() => setShowBusinessCRM((prev) => !prev)}
+            >
+              🤝 CRM & Leads
+            </button>
+          </div>
+        </section>
+      )}
+
+      {appMode === "business" && showBusinessCRM && (
+        <section className="business-crm-panel">
+          <div className="business-crm-header">
+            <div>
+              <h3>🤝 CRM & Leads</h3>
+              <p>Manage prospects, contacts and lead status directly inside VikoP.</p>
+            </div>
+            <button
+              type="button"
+              className="business-crm-close"
+              onClick={() => setShowBusinessCRM(false)}
+              aria-label="Close CRM"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="business-crm-form">
+            <input
+              id="business-crm-lead-name"
+              placeholder="Lead name"
+            />
+            <input
+              id="business-crm-lead-contact"
+              placeholder="Email / phone"
+            />
+            <select id="business-crm-lead-status" defaultValue="new">
+              <option value="new">New</option>
+              <option value="warm">Warm</option>
+              <option value="hot">Hot</option>
+              <option value="cold">Cold</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => {
+                const name =
+                  document.getElementById("business-crm-lead-name")?.value.trim() || "";
+                const contact =
+                  document.getElementById("business-crm-lead-contact")?.value.trim() || "";
+                const status =
+                  document.getElementById("business-crm-lead-status")?.value || "new";
+
+                if (!name) {
+                  alert("Lead name enter karo.");
+                  return;
+                }
+
+                const added = addBusinessLead(name, contact, status);
+
+                if (!added) return;
+
+                const nameInput = document.getElementById("business-crm-lead-name");
+                const contactInput = document.getElementById("business-crm-lead-contact");
+
+                if (nameInput) nameInput.value = "";
+                if (contactInput) contactInput.value = "";
+              }}
+            >
+              ➕ Add Lead
+            </button>
+          </div>
+
+          <div className="business-crm-list">
+            {businessLeads.length === 0 ? (
+              <div className="business-crm-empty">
+                No leads yet. Add your first lead above.
+              </div>
+            ) : (
+              businessLeads.map((lead) => (
+                <div className="business-crm-card" key={lead.id}>
+                  <div className="business-crm-card-main">
+                    <strong>{lead.name}</strong>
+                    <span>{lead.contact || "No contact provided"}</span>
+                    <small>Status: {lead.status}</small>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="business-crm-delete"
+                    onClick={() =>
+                      setBusinessLeads((prev) =>
+                        prev.filter((item) => item.id !== lead.id)
+                      )
+                    }
+                    title="Delete lead"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
         </section>
       )}
 
@@ -1048,7 +1235,7 @@ ${userMessage}`
       </main>
 
       {appMode === "business" && (
-        <div style={{
+        <div className="legacy-lead-workspace" style={{
           margin: "10px auto",
           maxWidth: "900px",
           width: "calc(100% - 24px)",
@@ -1081,16 +1268,9 @@ ${userMessage}`
                 return;
               }
 
-              setBusinessLeads(prev => [
-                {
-                  id: Date.now().toString(),
-                  name,
-                  contact,
-                  status,
-                  createdAt: Date.now()
-                },
-                ...prev
-              ]);
+              const added = addBusinessLead(name, contact, status);
+
+              if (!added) return;
 
               document.getElementById("lead-name").value = "";
               document.getElementById("lead-contact").value = "";
@@ -1264,25 +1444,46 @@ ${userMessage}`
         </div>
       )}
 
-      <div className="input-area">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="*/*"
-          onChange={handleFileSelect}
-          style={{ display: "none" }}
-        />
+      <input
+        ref={imageInputRef}
+        type="file"
+        multiple
+        accept="image/*"
+        onChange={handleFileSelect}
+        style={{ display: "none" }}
+      />
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="application/pdf,.doc,.docx,.txt,.csv,.xlsx"
+        onChange={handleFileSelect}
+        style={{ display: "none" }}
+      />
+
+      <div className="input-area">
+        <div style={{ position: "relative", display: "inline-block" }}>
         <button
           type="button"
           className="tool-button"
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => setShowAttachMenu((v) => !v)}
           disabled={loading}
           title="Attach files"
         >
           📎
         </button>
+        {showAttachMenu && (
+          <div style={{ position: "absolute", bottom: "110%", left: 0, background: "#0f2a33", border: "1px solid #1c4550", borderRadius: "8px", padding: "6px", zIndex: 50, whiteSpace: "nowrap" }}>
+            <button type="button" onClick={() => { setShowAttachMenu(false); imageInputRef.current?.click(); }} style={{ display: "block", width: "100%", background: "none", border: "none", color: "#fff", padding: "6px 10px", textAlign: "left", cursor: "pointer" }}>
+              🖼️ Photos
+            </button>
+            <button type="button" onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }} style={{ display: "block", width: "100%", background: "none", border: "none", color: "#fff", padding: "6px 10px", textAlign: "left", cursor: "pointer" }}>
+              📄 Document
+            </button>
+          </div>
+        )}
+      </div>
 
         <div className="input-column">
           {selectedFiles.length > 0 && (

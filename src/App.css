@@ -826,3 +826,252 @@ button {
   flex: none !important;
 }
 
+
+
+/* =========================================================
+   FINAL BUSINESS WORKSPACE LAYOUT
+   ========================================================= */
+
+.app.app-business {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding-bottom: 90px !important;
+  scroll-behavior: smooth;
+}
+
+.app.app-business .chat {
+  height: auto !important;
+  min-height: 420px !important;
+  overflow: visible !important;
+  padding: 24px 18px 24px !important;
+}
+
+.app.app-business .message {
+  max-width: min(900px, 94%) !important;
+}
+
+.app.app-business .message.assistant {
+  width: min(900px, 94%) !important;
+}
+
+.app.app-business .message.user {
+  width: fit-content;
+  max-width: min(760px, 90%) !important;
+}
+
+.app.app-business .input-area {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  z-index: 100 !important;
+}
+
+.app.app-business .business-tools-persistent {
+  position: relative !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+  width: min(900px, calc(100% - 24px)) !important;
+  margin: 18px auto 24px !important;
+  z-index: 5 !important;
+}
+
+.app.app-business .business-tools-persistent ~ .input-area {
+  position: fixed !important;
+  bottom: 0 !important;
+}
+
+.business-section-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+.business-crm-toggle {
+  border: 1px solid rgba(79, 209, 255, 0.35);
+  border-radius: 12px;
+  padding: 11px 16px;
+  background: rgba(49, 184, 208, 0.10);
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.business-crm-toggle.active {
+  background: rgba(49, 184, 208, 0.22);
+  border-color: rgba(79, 209, 255, 0.65);
+}
+
+.business-crm-panel {
+  width: min(900px, calc(100% - 24px));
+  margin: 12px auto 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(7, 35, 48, 0.92);
+  border: 1px solid rgba(79, 209, 255, 0.20);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+}
+
+.business-crm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.business-crm-header h3 {
+  margin: 0 0 5px;
+  font-size: 20px;
+}
+
+.business-crm-header p {
+  margin: 0;
+  color: #91b8c1;
+  font-size: 13px;
+}
+
+.business-crm-close {
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: white;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.business-crm-form {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 0.8fr auto;
+  gap: 9px;
+}
+
+.business-crm-form input,
+.business-crm-form select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 13px;
+  border-radius: 10px;
+  border: 1px solid rgba(100, 210, 225, 0.22);
+  background: rgba(15, 55, 70, 0.92);
+  color: white;
+  outline: none;
+}
+
+.business-crm-form input::placeholder {
+  color: #83aab4;
+}
+
+.business-crm-form button {
+  border: 1px solid rgba(79, 209, 255, 0.30);
+  border-radius: 10px;
+  padding: 11px 14px;
+  background: rgba(49, 184, 208, 0.16);
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.business-crm-list {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.business-crm-empty {
+  padding: 14px;
+  text-align: center;
+  color: #83aab4;
+  border: 1px dashed rgba(100, 210, 225, 0.20);
+  border-radius: 10px;
+}
+
+.business-crm-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(100, 210, 225, 0.10);
+}
+
+.business-crm-card-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.business-crm-card-main strong {
+  font-size: 15px;
+}
+
+.business-crm-card-main span,
+.business-crm-card-main small {
+  color: #91b8c1;
+}
+
+.business-crm-delete {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 9px;
+  background: rgba(180, 63, 75, 0.18);
+  color: white;
+  cursor: pointer;
+}
+
+.legacy-lead-workspace {
+  display: none !important;
+}
+
+@media (max-width: 700px) {
+  .app.app-business .chat {
+    min-height: 380px !important;
+    padding: 18px 12px 18px !important;
+  }
+
+  .app.app-business .message,
+  .app.app-business .message.assistant {
+    width: 96% !important;
+    max-width: 96% !important;
+  }
+
+  .business-crm-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .business-crm-form select,
+  .business-crm-form button {
+    width: 100%;
+  }
+
+  .app.app-business .business-tools-persistent {
+    width: calc(100% - 20px) !important;
+    margin: 14px auto 20px !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .business-crm-form {
+    grid-template-columns: 1fr;
+  }
+
+  .business-crm-header h3 {
+    font-size: 18px;
+  }
+
+  .business-crm-header p {
+    font-size: 12px;
+  }
+}
