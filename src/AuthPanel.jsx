@@ -14,9 +14,26 @@ export default function AuthPanel({ onLogin }) {
     event.preventDefault();
     setError("");
 
+    const cleanEmail = email.trim().toLowerCase();
+
     if (mode === "register") {
-      if (!name.trim() || !email.trim() || !password || !businessName.trim()) {
+      if (
+        !name.trim() ||
+        !cleanEmail ||
+        !password ||
+        !businessName.trim()
+      ) {
         setError("Name, email, password and business name are required.");
+        return;
+      }
+
+      if (password.length < 8) {
+        setError("Password must be at least 8 characters.");
+        return;
+      }
+    } else {
+      if (!cleanEmail || !password) {
+        setError("Email and password are required.");
         return;
       }
     }
@@ -31,17 +48,18 @@ export default function AuthPanel({ onLogin }) {
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            Accept: "application/json"
           },
           body: JSON.stringify(
             mode === "login"
               ? {
-                  email: email.trim(),
+                  email: cleanEmail,
                   password
                 }
               : {
                   name: name.trim(),
-                  email: email.trim(),
+                  email: cleanEmail,
                   password,
                   businessName: businessName.trim(),
                   industry: industry.trim()
@@ -50,13 +68,28 @@ export default function AuthPanel({ onLogin }) {
         }
       );
 
-      const data = await response.json();
+      const rawText = await response.text();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Authentication failed.");
+      let data = {};
+
+      if (rawText.trim()) {
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          throw new Error(
+            `Server returned an invalid response (${response.status}).`
+          );
+        }
       }
 
-      if (!data.token) {
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          `Authentication failed (${response.status}).`
+        );
+      }
+
+      if (!data?.token) {
         throw new Error("Authentication token was not returned.");
       }
 
@@ -69,9 +102,14 @@ export default function AuthPanel({ onLogin }) {
         );
       }
 
-      onLogin(data.token);
+      onLogin(data.token, data.user || null);
     } catch (err) {
-      setError(err.message || "Something went wrong.");
+      console.error("Authentication error:", err);
+
+      setError(
+        err?.message ||
+        "Unable to connect to the server. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -82,7 +120,11 @@ export default function AuthPanel({ onLogin }) {
       <div className="auth-card">
         <div className="auth-header">
           <div className="brand-icon">🐟</div>
-          <h2>VikoP <span>AI</span></h2>
+
+          <h2>
+            VikoP <span>AI</span>
+          </h2>
+
           <p>
             {mode === "login"
               ? "Login to your business workspace"
@@ -98,6 +140,7 @@ export default function AuthPanel({ onLogin }) {
               setMode("login");
               setError("");
             }}
+            disabled={loading}
           >
             Login
           </button>
@@ -109,6 +152,7 @@ export default function AuthPanel({ onLogin }) {
               setMode("register");
               setError("");
             }}
+            disabled={loading}
           >
             Create Account
           </button>
@@ -124,6 +168,7 @@ export default function AuthPanel({ onLogin }) {
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Your name"
                   autoComplete="name"
+                  disabled={loading}
                 />
               </div>
 
@@ -134,6 +179,7 @@ export default function AuthPanel({ onLogin }) {
                   onChange={(e) => setBusinessName(e.target.value)}
                   placeholder="Your company name"
                   autoComplete="organization"
+                  disabled={loading}
                 />
               </div>
 
@@ -143,6 +189,7 @@ export default function AuthPanel({ onLogin }) {
                   value={industry}
                   onChange={(e) => setIndustry(e.target.value)}
                   placeholder="Real Estate, Gym, Restaurant..."
+                  disabled={loading}
                 />
               </div>
             </>
@@ -156,6 +203,7 @@ export default function AuthPanel({ onLogin }) {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@company.com"
               autoComplete="email"
+              disabled={loading}
             />
           </div>
 
@@ -167,13 +215,16 @@ export default function AuthPanel({ onLogin }) {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
               autoComplete={
-                mode === "login" ? "current-password" : "new-password"
+                mode === "login"
+                  ? "current-password"
+                  : "new-password"
               }
+              disabled={loading}
             />
           </div>
 
           {error && (
-            <div className="auth-error">
+            <div className="auth-error" role="alert">
               {error}
             </div>
           )}

@@ -27,27 +27,50 @@ function getChatTitle(messages) {
 }
 
 function App() {
-  const [authToken, setAuthToken] = useState(() => {
+const [authToken, setAuthToken] = useState(() => {
+  try {
+    return localStorage.getItem("vikop-auth-token") || "";
+  } catch {
+    return "";
+  }
+});
+
+const [authUser, setAuthUser] = useState(() => {
+  try {
+    const savedUser = localStorage.getItem("vikop-auth-user");
+    return savedUser ? JSON.parse(savedUser) : null;
+  } catch {
+    return null;
+  }
+});
+
+const [showBusinessDashboard, setShowBusinessDashboard] = useState(false);
+
+function handleLogin(token, user = null) {
+  setAuthToken(token);
+
+  if (user) {
+    setAuthUser(user);
+
     try {
-      return localStorage.getItem("vikop-auth-token") || "";
-    } catch {
-      return "";
+      localStorage.setItem(
+        "vikop-auth-user",
+        JSON.stringify(user)
+      );
+    } catch (error) {
+      console.error("Failed to save auth user:", error);
     }
-  });
-
-  const [showBusinessDashboard, setShowBusinessDashboard] = useState(false);
-
-  function handleLogin(token) {
-    setAuthToken(token);
   }
+}
 
-  function logoutBusiness() {
-    localStorage.removeItem("vikop-auth-token");
-    localStorage.removeItem("vikop-auth-user");
-    setAuthToken("");
-    setShowBusinessDashboard(false);
-  }
+function logoutBusiness() {
+  localStorage.removeItem("vikop-auth-token");
+  localStorage.removeItem("vikop-auth-user");
 
+  setAuthToken("");
+  setAuthUser(null);
+  setShowBusinessDashboard(false);
+}
 
 
   const [chatMessages, setChatMessages] = useState(() => {
@@ -71,6 +94,7 @@ function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
+  const [pendingSend, setPendingSend] = useState(false);
   const [listening, setListening] = useState(false);
   const [appMode, setAppMode] = useState("chat");
   const [showHistory, setShowHistory] = useState(false);
@@ -192,7 +216,6 @@ function App() {
     }
   }
 
-  const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const userMessageRef = useRef(null);
@@ -248,12 +271,15 @@ function App() {
 
     const safeMessages = messages.map((message) => ({
       ...message,
-      attachments: Array.isArray(message.attachments)
-        ? message.attachments.map((file) => ({
-            name: file.name,
-            mimeType: file.mimeType
-          }))
-        : []
+attachments: Array.isArray(message.attachments)
+  ? message.attachments.map((file) => ({
+      name: file.name,
+      mimeType: file.mimeType,
+      ...(file.fileUri
+        ? { fileUri: file.fileUri }
+        : {})
+    }))
+  : []
     }));
 
     const id =
@@ -349,10 +375,15 @@ function App() {
   }
 
   async function handleFileSelect(event) {
-    const files = Array.from(event.target.files || []);
+    const inputElement = event.target;
+
+    // File choose hone ke baad attachment menu automatically close.
+    setShowAttachMenu(false);
+
+    const files = Array.from(inputElement.files || []);
 
     if (files.length === 0) {
-      event.target.value = "";
+      inputElement.value = "";
       return;
     }
 
@@ -365,7 +396,8 @@ function App() {
         /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name);
 
       const isPDF =
-        name.endsWith(".pdf") || type === "application/pdf";
+        name.endsWith(".pdf") ||
+        type === "application/pdf";
 
       const isText =
         name.endsWith(".txt") ||
@@ -381,25 +413,166 @@ function App() {
       alert("Only images, PDF, text, JSON and CSV files are supported.");
     }
 
-    try {
-      const fileData = await Promise.all(
-        validFiles.map(async (file) => {
-          const name = (file.name || "").toLowerCase();
-          const type = (file.type || "").toLowerCase();
+    // Allow selecting the same file again later.
+    inputElement.value = "";
 
-          const isImage =
-            type.startsWith("image/") ||
-            /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name);
+    for (const file of validFiles) {
+      const name = (file.name || "").toLowerCase();
+      const type = (file.type || "").toLowerCase();
 
-          const isPDF =
-            name.endsWith(".pdf") || type === "application/pdf";
+      const isImage =
+        type.startsWith("image/") ||
+        /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name);
 
-          if (isImage) {
-            if (file.size > 50 * 1024 * 1024) {
-              throw new Error("Image 50 MB se badi hai.");
+      const isPDF =
+        name.endsWith(".pdf") ||
+        type === "application/pdf";
+
+      const uploadId =
+        `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+      // PDF ko immediately UI me show karo.
+      if (isPDF) {
+        if (file.size > 50 * 1024 * 1024) {
+          alert("PDF 50 MB se badi hai.");
+          continue;
+        }
+
+        // PDF immediately UI me show karo.
+        setSelectedFiles((prev) => [
+          ...prev,
+          {
+            id: uploadId,
+            name: file.name,
+            mimeType: "application/pdf",
+            uploading: true,
+            size: file.size
+          }
+        ]);
+
+        try {
+          let response;
+
+          try {
+            response = await fetch(
+              "/api/upload-pdf-stream?name=" +
+                encodeURIComponent(file.name),
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type":
+                    "application/pdf"
+                },
+                body: file
+              }
+            );
+
+            if (!response.ok) {
+              throw new Error(
+                "Fast PDF upload failed."
+              );
             }
+          } catch (streamError) {
+            console.warn(
+              "Fast PDF upload failed; existing PDF upload fallback use hoga:",
+              streamError
+            );
 
-            return await new Promise((resolve, reject) => {
+            const formData =
+              new FormData();
+
+            formData.append(
+              "file",
+              file
+            );
+
+            response = await fetch(
+              "/api/upload-pdf",
+              {
+                method: "POST",
+                body: formData
+              }
+            );
+          }
+
+          const rawText =
+            await response.text();
+
+          let data = {};
+
+          if (rawText.trim()) {
+            try {
+              data = JSON.parse(rawText);
+            } catch {
+              throw new Error(
+                `PDF upload server ne invalid response diya (${response.status}).`
+              );
+            }
+          }
+
+          if (!response.ok) {
+            throw new Error(
+              data?.error ||
+              `PDF upload failed (${response.status}).`
+            );
+          }
+
+          if (!data?.fileUri) {
+            throw new Error(
+              "PDF upload hua, lekin Gemini file URI nahi mila."
+            );
+          }
+
+          setSelectedFiles((prev) =>
+            prev.map((item) =>
+              item.id === uploadId
+                ? {
+                    id: uploadId,
+                    name: data.name || file.name,
+                    mimeType:
+                      data.mimeType ||
+                      "application/pdf",
+                    fileUri: data.fileUri,
+                    fileName: data.fileName || null,
+                    uploading: false,
+                    size: file.size
+                  }
+                : item
+            )
+          );
+        } catch (error) {
+          console.error(
+            "PDF upload error:",
+            error
+          );
+
+          setSelectedFiles((prev) =>
+            prev.map((item) =>
+              item.id === uploadId
+                ? {
+                    ...item,
+                    uploading: false,
+                    uploadError:
+                      error?.message ||
+                      "PDF upload failed."
+                  }
+                : item
+            )
+          );
+        }
+
+        continue;
+      }
+
+      if (isImage) {
+        if (file.size > 50 * 1024 * 1024) {
+          alert("Image 50 MB se badi hai.");
+          continue;
+        }
+
+        try {
+          const imageData = await new Promise(
+            (resolve, reject) => {
               const reader = new FileReader();
 
               reader.onload = () => {
@@ -408,61 +581,122 @@ function App() {
                 img.onload = () => {
                   const MAX_SIZE = 1600;
 
-                  let width = img.naturalWidth || img.width;
-                  let height = img.naturalHeight || img.height;
+                  let width =
+                    img.naturalWidth ||
+                    img.width;
+
+                  let height =
+                    img.naturalHeight ||
+                    img.height;
 
                   if (!width || !height) {
-                    reject(new Error("Invalid image dimensions"));
+                    reject(
+                      new Error(
+                        "Invalid image dimensions"
+                      )
+                    );
                     return;
                   }
 
                   const scale = Math.min(
                     1,
-                    MAX_SIZE / Math.max(width, height)
+                    MAX_SIZE /
+                      Math.max(
+                        width,
+                        height
+                      )
                   );
 
-                  width = Math.max(1, Math.round(width * scale));
-                  height = Math.max(1, Math.round(height * scale));
+                  width = Math.max(
+                    1,
+                    Math.round(
+                      width * scale
+                    )
+                  );
 
-                  const canvas = document.createElement("canvas");
+                  height = Math.max(
+                    1,
+                    Math.round(
+                      height * scale
+                    )
+                  );
+
+                  const canvas =
+                    document.createElement(
+                      "canvas"
+                    );
+
                   canvas.width = width;
                   canvas.height = height;
 
-                  const ctx = canvas.getContext("2d");
+                  const ctx =
+                    canvas.getContext(
+                      "2d"
+                    );
 
                   if (!ctx) {
-                    reject(new Error("Canvas unavailable"));
+                    reject(
+                      new Error(
+                        "Canvas unavailable"
+                      )
+                    );
                     return;
                   }
 
-                  ctx.drawImage(img, 0, 0, width, height);
+                  ctx.drawImage(
+                    img,
+                    0,
+                    0,
+                    width,
+                    height
+                  );
 
                   canvas.toBlob(
                     (blob) => {
                       if (!blob) {
-                        reject(new Error("Image compression failed"));
+                        reject(
+                          new Error(
+                            "Image compression failed"
+                          )
+                        );
                         return;
                       }
 
-                      const blobReader = new FileReader();
+                      const blobReader =
+                        new FileReader();
 
                       blobReader.onload = () => {
-                        const result = String(blobReader.result || "");
-                        const base64 = result.includes(",")
-                          ? result.split(",")[1]
-                          : result;
+                        const result =
+                          String(
+                            blobReader.result ||
+                              ""
+                          );
+
+                        const base64 =
+                          result.includes(",")
+                            ? result.split(",")[1]
+                            : result;
 
                         resolve({
+                          id: uploadId,
                           name: file.name,
                           mimeType: "image/jpeg",
-                          data: base64
+                          data: base64,
+                          uploading: false,
+                          size: file.size
                         });
                       };
 
                       blobReader.onerror = () =>
-                        reject(new Error("Compressed image read failed."));
+                        reject(
+                          new Error(
+                            "Compressed image read failed."
+                          )
+                        );
 
-                      blobReader.readAsDataURL(blob);
+                      blobReader.readAsDataURL(
+                        blob
+                      );
                     },
                     "image/jpeg",
                     0.82
@@ -470,91 +704,109 @@ function App() {
                 };
 
                 img.onerror = () =>
-                  reject(new Error("Invalid image file."));
+                  reject(
+                    new Error(
+                      "Invalid image file."
+                    )
+                  );
 
-                img.src = String(reader.result || "");
+                img.src = String(
+                  reader.result || ""
+                );
               };
 
               reader.onerror = () =>
-                reject(new Error("Image file read failed."));
+                reject(
+                  new Error(
+                    "Image file read failed."
+                  )
+                );
 
               reader.readAsDataURL(file);
-            });
-          }
-
-          if (isPDF) {
-            if (file.size > 40 * 1024 * 1024) {
-              throw new Error("PDF 40 MB se badi hai.");
             }
+          );
 
-            return await new Promise((resolve, reject) => {
-              const reader = new FileReader();
+          setSelectedFiles((prev) => [
+            ...prev,
+            imageData
+          ]);
+        } catch (error) {
+          console.error(
+            "Image processing error:",
+            error
+          );
+
+          alert(
+            error?.message ||
+            "Image process nahi ho payi."
+          );
+        }
+
+        continue;
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        alert("Text file 5 MB se badi hai.");
+        continue;
+      }
+
+      try {
+        const textData =
+          await new Promise(
+            (resolve, reject) => {
+              const reader =
+                new FileReader();
 
               reader.onload = () => {
-                try {
-                  const result = String(reader.result || "");
+                const result =
+                  String(
+                    reader.result || ""
+                  );
 
-                  if (!result) {
-                    reject(new Error("PDF read nahi ho payi."));
-                    return;
-                  }
-
-                  const base64 = result.includes(",")
+                const base64 =
+                  result.includes(",")
                     ? result.split(",")[1]
                     : result;
 
-                  resolve({
-                    name: file.name,
-                    mimeType: "application/pdf",
-                    data: base64
-                  });
-                } catch (error) {
-                  reject(error);
-                }
+                resolve({
+                  id: uploadId,
+                  name: file.name,
+                  mimeType:
+                    file.type ||
+                    "text/plain",
+                  data: base64,
+                  uploading: false,
+                  size: file.size
+                });
               };
 
               reader.onerror = () =>
-                reject(new Error("PDF file read failed."));
+                reject(
+                  new Error(
+                    "Text file read failed."
+                  )
+                );
 
               reader.readAsDataURL(file);
-            });
-          }
+            }
+          );
 
-          if (file.size > 5 * 1024 * 1024) {
-            throw new Error("Text file 5 MB se badi hai.");
-          }
+        setSelectedFiles((prev) => [
+          ...prev,
+          textData
+        ]);
+      } catch (error) {
+        console.error(
+          "Text file processing error:",
+          error
+        );
 
-          return await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-
-            reader.onload = () => {
-              const result = String(reader.result || "");
-              const base64 = result.includes(",")
-                ? result.split(",")[1]
-                : result;
-
-              resolve({
-                name: file.name,
-                mimeType: file.type || "text/plain",
-                data: base64
-              });
-            };
-
-            reader.onerror = () =>
-              reject(new Error("Text file read failed."));
-
-            reader.readAsDataURL(file);
-          });
-        })
-      );
-
-      setSelectedFiles((prev) => [...prev, ...fileData]);
-    } catch (error) {
-      console.error("File processing error:", error);
-      alert(error?.message || "File process nahi ho payi.");
+        alert(
+          error?.message ||
+          "Text file process nahi ho payi."
+        );
+      }
     }
-
-    event.target.value = "";
   }
 
   async function requestAI(
@@ -578,12 +830,18 @@ function App() {
     try {
       const compactHistory = Array.isArray(historyForRequest)
         ? historyForRequest.map((item) => ({
-            ...item,
-            attachments: Array.isArray(item.attachments)
-              ? item.attachments.map((file) => ({
-                  name: file.name,
-                  mimeType: file.mimeType
-                }))
+            role: item?.role,
+            text: item?.text || "",
+            attachments: Array.isArray(item?.attachments)
+              ? item.attachments
+                  .filter((file) => file?.mimeType)
+                  .map((file) => ({
+                    name: file.name,
+                    mimeType: file.mimeType,
+                    ...(file.fileUri
+                      ? { fileUri: file.fileUri }
+                      : {})
+                  }))
               : []
           }))
         : [];
@@ -738,8 +996,49 @@ function App() {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
+  useEffect(() => {
+    if (!pendingSend || loading) {
+      return;
+    }
+
+    if (selectedFiles.length === 0) {
+      setPendingSend(false);
+      return;
+    }
+
+    if (selectedFiles.some((file) => file?.uploading)) {
+      return;
+    }
+
+    if (selectedFiles.some((file) => file?.uploadError)) {
+      setPendingSend(false);
+      return;
+    }
+
+    setPendingSend(false);
+
+    Promise.resolve().then(() => {
+      sendMessage();
+    });
+  }, [pendingSend, selectedFiles, loading]);
+
   async function sendMessage() {
-    if ((!input.trim() && selectedFiles.length === 0) || loading) {
+    if (loading) {
+      return;
+    }
+
+    if (!input.trim() && selectedFiles.length === 0) {
+      return;
+    }
+
+    if (selectedFiles.some((file) => file?.uploading)) {
+      setPendingSend(true);
+      return;
+    }
+
+    if (selectedFiles.some((file) => file?.uploadError)) {
+      alert("PDF upload complete nahi hui. Failed PDF ko remove karke dobara select karo.");
+      setPendingSend(false);
       return;
     }
 
@@ -914,6 +1213,34 @@ ${userMessage}`
             <button className="header-button" onClick={newChat}>
               🆕 New Chat
             </button>
+<div className="profile-area">
+  <div className="profile-chip">
+    <div className="profile-avatar">
+      {(authUser?.name || "U")
+        .trim()
+        .charAt(0)
+        .toUpperCase()}
+    </div>
+
+    <div className="profile-info">
+      <strong>{authUser?.name || "User"}</strong>
+
+      <span>
+        {authUser?.businessName ||
+          authUser?.email ||
+          "Account"}
+      </span>
+    </div>
+  </div>
+
+  <button
+    type="button"
+    className="header-button logout-button"
+    onClick={logoutBusiness}
+  >
+    🚪 Logout
+  </button>
+</div>
           </div>
         </div>
       </header>
@@ -1453,15 +1780,6 @@ ${userMessage}`
         style={{ display: "none" }}
       />
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        accept="application/pdf,.doc,.docx,.txt,.csv,.xlsx"
-        onChange={handleFileSelect}
-        style={{ display: "none" }}
-      />
-
       <div className="input-area">
         <div style={{ position: "relative", display: "inline-block" }}>
         <button
@@ -1478,9 +1796,32 @@ ${userMessage}`
             <button type="button" onClick={() => { setShowAttachMenu(false); imageInputRef.current?.click(); }} style={{ display: "block", width: "100%", background: "none", border: "none", color: "#fff", padding: "6px 10px", textAlign: "left", cursor: "pointer" }}>
               🖼️ Photos
             </button>
-            <button type="button" onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }} style={{ display: "block", width: "100%", background: "none", border: "none", color: "#fff", padding: "6px 10px", textAlign: "left", cursor: "pointer" }}>
+            <label style={{
+              display: "block",
+              width: "100%",
+              color: "#fff",
+              padding: "6px 10px",
+              textAlign: "left",
+              cursor: "pointer",
+              boxSizing: "border-box",
+              position: "relative"
+            }}>
               📄 Document
-            </button>
+              <input
+                type="file"
+                multiple
+                accept=".pdf"
+                onChange={handleFileSelect}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  opacity: 0,
+                  cursor: "pointer"
+                }}
+              />
+            </label>
           </div>
         )}
       </div>
@@ -1495,6 +1836,11 @@ ${userMessage}`
                       ? "🖼️"
                       : "📄"}{" "}
                     {file.name}
+                    {file.uploading
+                      ? " — Uploading..."
+                      : file.uploadError
+                        ? " — Upload failed"
+                        : ""}
                   </span>
 
                   <button
