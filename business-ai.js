@@ -215,6 +215,138 @@ async function deleteMemory(req, res) {
   }
 }
 
+
+/* CRM & LEADS */
+
+function normalizeLeadContactServer(contact) {
+  const value = String(contact || "").trim().toLowerCase();
+
+  if (!value) return "";
+
+  if (value.includes("@")) {
+    return value.replace(/\s+/g, "");
+  }
+
+  return value.replace(/\D/g, "");
+}
+
+async function getLeads(req, res) {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, contact, status, notes, created_at, updated_at
+       FROM leads
+       WHERE business_id = $1
+       ORDER BY created_at DESC`,
+      [req.user.businessId]
+    );
+
+    res.json({ leads: result.rows });
+  } catch (error) {
+    console.error("Leads load error:", error);
+    res.status(500).json({
+      error: "Failed to load leads."
+    });
+  }
+}
+
+async function addLead(req, res) {
+  try {
+    const {
+      name,
+      contact = "",
+      status = "new",
+      notes = ""
+    } = req.body || {};
+
+    const cleanName = String(name || "").trim();
+    const cleanContact = String(contact || "").trim();
+    const cleanNotes = String(notes || "").trim();
+    const cleanStatus = String(status || "new").trim().toLowerCase();
+
+    if (!cleanName) {
+      return res.status(400).json({
+        error: "Lead name is required."
+      });
+    }
+
+    if (!["new", "warm", "hot", "cold"].includes(cleanStatus)) {
+      return res.status(400).json({
+        error: "Invalid lead status."
+      });
+    }
+
+    const normalizedContact = normalizeLeadContactServer(cleanContact);
+
+    if (normalizedContact) {
+      const existing = await pool.query(
+        `SELECT id
+         FROM leads
+         WHERE business_id = $1
+           AND lower(regexp_replace(COALESCE(contact, ''), '\\s+', '', 'g')) = $2
+         LIMIT 1`,
+        [req.user.businessId, normalizedContact]
+      );
+
+      if (existing.rows.length > 0) {
+        return res.status(409).json({
+          error: "This lead already exists."
+        });
+      }
+    }
+
+    const result = await pool.query(
+      `INSERT INTO leads
+       (id, business_id, name, contact, status, notes)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, name, contact, status, notes, created_at, updated_at`,
+      [
+        createId(),
+        req.user.businessId,
+        cleanName,
+        cleanContact || null,
+        cleanStatus,
+        cleanNotes || null
+      ]
+    );
+
+    res.status(201).json({
+      lead: result.rows[0]
+    });
+  } catch (error) {
+    console.error("Lead add error:", error);
+    res.status(500).json({
+      error: "Failed to save lead."
+    });
+  }
+}
+
+async function deleteLead(req, res) {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `DELETE FROM leads
+       WHERE id = $1
+         AND business_id = $2
+       RETURNING id`,
+      [id, req.user.businessId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Lead not found."
+      });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Lead delete error:", error);
+    res.status(500).json({
+      error: "Failed to delete lead."
+    });
+  }
+}
+
 /* CUSTOMER SUPPORT AI */
 
 async function customerSupportAI(req, res) {
@@ -624,6 +756,24 @@ Requirements:
 }
 
 export function registerBusinessAIRoutes(app) {
+  app.get(
+    "/api/business/leads",
+    authenticate,
+    getLeads
+  );
+
+  app.post(
+    "/api/business/leads",
+    authenticate,
+    addLead
+  );
+
+  app.delete(
+    "/api/business/leads/:id",
+    authenticate,
+    deleteLead
+  );
+
   app.get(
     "/api/business/profile",
     authenticate,

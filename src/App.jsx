@@ -116,13 +116,8 @@ function logoutBusiness() {
     }
   });
 
-  const [businessLeads, setBusinessLeads] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("vikop-business-leads") || "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [businessLeads, setBusinessLeads] = useState([]);
+  const [businessLeadsLoading, setBusinessLeadsLoading] = useState(false);
 
   const [chatHistory, setChatHistory] = useState(() => {
     try {
@@ -146,63 +141,103 @@ function logoutBusiness() {
   const [activeBusinessChatId, setActiveBusinessChatId] = useState(null);
 
 
-  function normalizeLeadContact(contact) {
-    const value = (contact || "").trim().toLowerCase();
-
-    if (!value) return "";
-
-    if (value.includes("@")) {
-      return value.replace(/\s+/g, "");
+  async function loadBusinessLeads() {
+    if (!authToken) {
+      setBusinessLeads([]);
+      return;
     }
 
-    return value.replace(/\D/g, "");
+    setBusinessLeadsLoading(true);
+
+    try {
+      const response = await fetch("/api/business/leads", {
+        headers: {
+          Authorization: `Bearer ${authToken}`
+        }
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to load leads.");
+      }
+
+      setBusinessLeads(Array.isArray(data.leads) ? data.leads : []);
+    } catch (error) {
+      console.error("Lead load failed:", error);
+      setBusinessLeads([]);
+    } finally {
+      setBusinessLeadsLoading(false);
+    }
   }
 
-  function addBusinessLead(name, contact, status) {
+  async function addBusinessLead(name, contact, status) {
     const cleanName = (name || "").trim();
     const cleanContact = (contact || "").trim();
-    const normalizedContact = normalizeLeadContact(cleanContact);
+    const cleanStatus = (status || "new").trim().toLowerCase();
 
     if (!cleanName) {
       alert("Lead name enter karo.");
       return false;
     }
 
-    let added = false;
-    let duplicate = false;
-
-    setBusinessLeads((prev) => {
-      if (
-        normalizedContact &&
-        prev.some(
-          (lead) =>
-            normalizeLeadContact(lead.contact) === normalizedContact
-        )
-      ) {
-        duplicate = true;
-        return prev;
-      }
-
-      added = true;
-
-      return [
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    try {
+      const response = await fetch("/api/business/leads", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
           name: cleanName,
           contact: cleanContact,
-          status: status || "new",
-          createdAt: Date.now()
-        },
-        ...prev
-      ];
-    });
+          status: cleanStatus
+        })
+      });
 
-    if (duplicate) {
-      alert("This lead already exists.");
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 409) {
+        alert("This lead already exists.");
+        return false;
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to save lead.");
+      }
+
+      if (data.lead) {
+        setBusinessLeads((prev) => [data.lead, ...prev]);
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Lead add failed:", error);
+      alert(error.message || "Failed to save lead.");
       return false;
     }
+  }
 
-    return added;
+  async function deleteBusinessLead(id) {
+    try {
+      const response = await fetch(`/api/business/leads/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${authToken}`
+        }
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete lead.");
+      }
+
+      setBusinessLeads((prev) => prev.filter((lead) => lead.id !== id));
+    } catch (error) {
+      console.error("Lead delete failed:", error);
+      alert(error.message || "Failed to delete lead.");
+    }
   }
 
   const messages =
@@ -251,9 +286,12 @@ function logoutBusiness() {
     localStorage.setItem("vikop-industry-mode", industryMode);
   }, [industryMode]);
 
+
   useEffect(() => {
-    localStorage.setItem("vikop-business-leads", JSON.stringify(businessLeads));
-  }, [businessLeads]);
+    if (appMode === "business" && authToken) {
+      loadBusinessLeads();
+    }
+  }, [appMode, authToken]);
 
   useEffect(() => {
     localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory));
@@ -1441,9 +1479,7 @@ ${userMessage}`
                     type="button"
                     className="business-crm-delete"
                     onClick={() =>
-                      setBusinessLeads((prev) =>
-                        prev.filter((item) => item.id !== lead.id)
-                      )
+                      deleteBusinessLead(lead.id)
                     }
                     title="Delete lead"
                   >
@@ -1560,89 +1596,6 @@ ${userMessage}`
           </div>
         )}
       </main>
-
-      {appMode === "business" && (
-        <div className="legacy-lead-workspace" style={{
-          margin: "10px auto",
-          maxWidth: "900px",
-          width: "calc(100% - 24px)",
-          padding: "14px",
-          borderRadius: "14px",
-          background: "rgba(255,255,255,0.05)"
-        }}>
-          <h3 style={{marginTop:0}}>👥 Lead Workspace</h3>
-
-          <div style={{
-            display:"grid",
-            gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",
-            gap:"8px"
-          }}>
-            <input id="lead-name" placeholder="Lead name" />
-            <input id="lead-contact" placeholder="Email / phone" />
-            <select id="lead-status">
-              <option value="new">New</option>
-              <option value="warm">Warm</option>
-              <option value="hot">Hot</option>
-              <option value="cold">Cold</option>
-            </select>
-            <button onClick={() => {
-              const name = document.getElementById("lead-name")?.value.trim();
-              const contact = document.getElementById("lead-contact")?.value.trim();
-              const status = document.getElementById("lead-status")?.value || "new";
-
-              if (!name) {
-                alert("Lead name enter karo.");
-                return;
-              }
-
-              const added = addBusinessLead(name, contact, status);
-
-              if (!added) return;
-
-              document.getElementById("lead-name").value = "";
-              document.getElementById("lead-contact").value = "";
-            }}>
-              ➕ Add Lead
-            </button>
-          </div>
-
-          {businessLeads.length > 0 && (
-            <div style={{marginTop:"12px"}}>
-              {businessLeads.map((lead) => (
-                <div
-                  key={lead.id}
-                  style={{
-                    display:"flex",
-                    justifyContent:"space-between",
-                    alignItems:"center",
-                    gap:"10px",
-                    padding:"9px",
-                    marginTop:"6px",
-                    borderRadius:"8px",
-                    background:"rgba(255,255,255,0.04)"
-                  }}
-                >
-                  <div>
-                    <strong>{lead.name}</strong>
-                    <div>{lead.contact || "No contact"}</div>
-                    <small>Status: {lead.status}</small>
-                  </div>
-
-                  <button
-                    onClick={() =>
-                      setBusinessLeads(prev =>
-                        prev.filter(item => item.id !== lead.id)
-                      )
-                    }
-                  >
-                    🗑️
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {appMode === "business" && (
         <div className="business-tools business-tools-persistent">
