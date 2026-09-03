@@ -419,7 +419,14 @@ async function addLead(req, res) {
       lead: result.rows[0]
     });
   } catch (error) {
-    console.error("Lead add error:", error);
+    console.error("Lead add error:", {
+      message: error?.message,
+      code: error?.code,
+      detail: error?.detail,
+      constraint: error?.constraint,
+      table: error?.table,
+      column: error?.column
+    });
     res.status(500).json({
       error: "Failed to save lead."
     });
