@@ -99,6 +99,7 @@ function logoutBusiness() {
   const [appMode, setAppMode] = useState("chat");
   const [showHistory, setShowHistory] = useState(false);
   const [showBusinessCRM, setShowBusinessCRM] = useState(false);
+  const [showPricing, setShowPricing] = useState(false);
 
   const [businessKnowledge, setBusinessKnowledge] = useState(() => {
     try {
@@ -887,7 +888,10 @@ attachments: Array.isArray(message.attachments)
       const response = await fetch("/chat", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          ...(authToken
+            ? { Authorization: `Bearer ${authToken}` }
+            : {})
         },
         body: JSON.stringify({
           message: userMessage,
@@ -900,7 +904,23 @@ attachments: Array.isArray(message.attachments)
       });
 
       if (!response.ok) {
-        throw new Error("AI server error");
+        const errorData = await response.json().catch(() => ({}));
+
+        if (response.status === 401) {
+          throw new Error("Session expired. Please log in again.");
+        }
+
+        if (response.status === 429) {
+          throw new Error(
+            errorData?.error ||
+            "Daily AI limit reached. Please upgrade your plan."
+          );
+        }
+
+        throw new Error(
+          errorData?.error ||
+          `AI server error (${response.status})`
+        );
       }
 
       if (!response.body) {
@@ -1012,7 +1032,9 @@ attachments: Array.isArray(message.attachments)
         ) {
           updated[updated.length - 1] = {
             role: "assistant",
-            text: "Sorry, AI se connection nahi ho paya."
+            text:
+              "AI error: " +
+              (error?.message || "Unknown error")
           };
           return updated;
         }
@@ -1021,7 +1043,9 @@ attachments: Array.isArray(message.attachments)
           ...updated,
           {
             role: "assistant",
-            text: "Sorry, AI se connection nahi ho paya."
+            text:
+              "AI error: " +
+              (error?.message || "Unknown error")
           }
         ];
       });
@@ -1251,6 +1275,14 @@ ${userMessage}`
             <button className="header-button" onClick={newChat}>
               🆕 New Chat
             </button>
+
+            <button
+              className="header-button pricing-button"
+              onClick={() => setShowPricing(true)}
+            >
+              ⭐ Upgrade
+            </button>
+
 <div className="profile-area">
   <div className="profile-chip">
     <div className="profile-avatar">
@@ -1282,6 +1314,138 @@ ${userMessage}`
           </div>
         </div>
       </header>
+
+      {showPricing && (
+        <div
+          className="pricing-overlay"
+          onClick={() => setShowPricing(false)}
+        >
+          <div
+            className="pricing-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="pricing-modal-header">
+              <div>
+                <span className="pricing-eyebrow">VikoP AI</span>
+                <h2>Choose your plan</h2>
+                <p>
+                  Start free, then upgrade when your business needs more.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="pricing-close"
+                onClick={() => setShowPricing(false)}
+                aria-label="Close pricing"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="pricing-grid">
+              <section className="pricing-card">
+                <span className="pricing-badge">FREE</span>
+                <h3>Free</h3>
+                <div className="pricing-price">
+                  $0<span>/month</span>
+                </div>
+                <p className="pricing-description">
+                  Explore VikoP AI before upgrading.
+                </p>
+
+                <ul>
+                  <li>15 AI requests per day</li>
+                  <li>AI Chat</li>
+                  <li>CRM & Leads</li>
+                  <li>Business workspace</li>
+                  <li>PDF AI access within your daily limit</li>
+                </ul>
+
+                <button
+                  type="button"
+                  className="pricing-plan-button pricing-secondary"
+                  onClick={() => setShowPricing(false)}
+                >
+                  Current plan
+                </button>
+              </section>
+
+              <section className="pricing-card pricing-featured">
+                <div className="pricing-popular">MOST POPULAR</div>
+                <span className="pricing-badge">PRO</span>
+                <h3>Pro</h3>
+                <div className="pricing-price">
+                  $19<span>/month</span>
+                </div>
+                <p className="pricing-description">
+                  For freelancers and growing businesses.
+                </p>
+
+                <ul>
+                  <li>500 AI requests per day</li>
+                  <li>Advanced Business AI tools</li>
+                  <li>Customer Support AI</li>
+                  <li>Social Media Marketing AI</li>
+                  <li>Business Data Analyst</li>
+                  <li>Business Document Generator</li>
+                  <li>Web Search & PDF AI</li>
+                </ul>
+
+                <button
+                  type="button"
+                  className="pricing-plan-button pricing-primary"
+                  onClick={() =>
+                    alert(
+                      "Pro checkout will be connected next. Your 7-day Pro trial is already enabled for new accounts."
+                    )
+                  }
+                >
+                  Start Pro
+                </button>
+              </section>
+
+              <section className="pricing-card">
+                <span className="pricing-badge">BUSINESS</span>
+                <h3>Business</h3>
+                <div className="pricing-price">
+                  $49<span>/month</span>
+                </div>
+                <p className="pricing-description">
+                  For teams and businesses with heavier AI usage.
+                </p>
+
+                <ul>
+                  <li>2,000 AI requests per day</li>
+                  <li>All Pro AI tools</li>
+                  <li>Business Knowledge / Memory</li>
+                  <li>CRM & Lead workspace</li>
+                  <li>Higher usage capacity</li>
+                  <li>Built for growing teams</li>
+                </ul>
+
+                <button
+                  type="button"
+                  className="pricing-plan-button pricing-secondary"
+                  onClick={() =>
+                    alert(
+                      "Business checkout will be connected next."
+                    )
+                  }
+                >
+                  Choose Business
+                </button>
+              </section>
+            </div>
+
+            <div className="pricing-trust">
+              <span>✓ No payment is taken from this screen</span>
+              <span>✓ Upgrade whenever you need more usage</span>
+              <span>✓ USD pricing for international customers</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showHistory && (
         <aside className="history-panel">
@@ -1433,7 +1597,7 @@ ${userMessage}`
 
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 const name =
                   document.getElementById("business-crm-lead-name")?.value.trim() || "";
                 const contact =
@@ -1446,7 +1610,7 @@ ${userMessage}`
                   return;
                 }
 
-                const added = addBusinessLead(name, contact, status);
+                const added = await addBusinessLead(name, contact, status);
 
                 if (!added) return;
 

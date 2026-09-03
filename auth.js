@@ -73,6 +73,30 @@ export async function register(req, res) {
         ]
       );
 
+      const trialStartedAt = new Date();
+      const trialEndsAt = new Date(
+        trialStartedAt.getTime() + 7 * 24 * 60 * 60 * 1000
+      );
+
+      await pool.query(
+        `INSERT INTO subscriptions
+         (
+           id,
+           user_id,
+           plan,
+           status,
+           trial_started_at,
+           trial_ends_at
+         )
+         VALUES ($1, $2, 'pro', 'trialing', $3, $4)`,
+        [
+          createId(),
+          userId,
+          trialStartedAt,
+          trialEndsAt
+        ]
+      );
+
       await pool.query("COMMIT");
     } catch (error) {
       await pool.query("ROLLBACK");

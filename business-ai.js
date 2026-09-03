@@ -11,6 +11,112 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 }
 });
 
+
+const BUSINESS_AI_PLAN_LIMITS = Object.freeze({
+  free: 15,
+  pro: 500,
+  business: 2000
+});
+
+async function enforceBusinessAIQuota(req, res, next) {
+  const userId = req.user?.userId;
+
+  if (!userId) {
+    return res.status(401).json({
+      error: "Authentication required."
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const subscriptionResult = await client.query(
+      "SELECT plan, status, trial_ends_at FROM subscriptions WHERE user_id = $1 FOR UPDATE",
+      [userId]
+    );
+
+    let plan = subscriptionResult.rows[0]?.plan || "free";
+    const status = subscriptionResult.rows[0]?.status || "active";
+    const trialEndsAt = subscriptionResult.rows[0]?.trial_ends_at || null;
+
+    if (
+      status === "trialing" &&
+      trialEndsAt &&
+      new Date(trialEndsAt).getTime() <= Date.now()
+    ) {
+      plan = "free";
+
+      await client.query(
+        "UPDATE subscriptions SET plan = 'free', status = 'expired', updated_at = NOW() WHERE user_id = $1",
+        [userId]
+      );
+    }
+
+    if (!BUSINESS_AI_PLAN_LIMITS[plan]) {
+      plan = "free";
+    }
+
+    const limit = BUSINESS_AI_PLAN_LIMITS[plan];
+
+    await client.query(
+      "INSERT INTO usage_daily (id, user_id, usage_date, ai_requests) VALUES (gen_random_uuid(), $1, CURRENT_DATE, 0) ON CONFLICT (user_id, usage_date) DO NOTHING",
+      [userId]
+    );
+
+    const usageResult = await client.query(
+      "SELECT ai_requests FROM usage_daily WHERE user_id = $1 AND usage_date = CURRENT_DATE FOR UPDATE",
+      [userId]
+    );
+
+    const used = Number(usageResult.rows[0]?.ai_requests || 0);
+
+    if (used >= limit) {
+      await client.query("ROLLBACK");
+
+      const upgradePlan =
+        plan === "free"
+          ? "Pro"
+          : plan === "pro"
+            ? "Business"
+            : "higher access";
+
+      return res.status(429).json({
+        error:
+          "Daily AI limit reached (" +
+          limit +
+          " requests). Upgrade to " +
+          upgradePlan +
+          " for more usage.",
+        plan,
+        used,
+        limit,
+        upgradeRequired: true
+      });
+    }
+
+    await client.query(
+      "UPDATE usage_daily SET ai_requests = ai_requests + 1, updated_at = NOW() WHERE user_id = $1 AND usage_date = CURRENT_DATE",
+      [userId]
+    );
+
+    await client.query("COMMIT");
+
+    next();
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+
+    console.error("Business AI quota error:", error);
+
+    return res.status(500).json({
+      error: "Unable to verify AI usage limit."
+    });
+  } finally {
+    client.release();
+  }
+}
+
 function createId() {
   return crypto.randomUUID();
 }
@@ -807,36 +913,42 @@ export function registerBusinessAIRoutes(app) {
   app.post(
     "/api/ai/customer-support",
     authenticate,
+    enforceBusinessAIQuota,
     customerSupportAI
   );
 
   app.post(
     "/api/ai/social-marketing",
     authenticate,
+    enforceBusinessAIQuota,
     socialMarketingAI
   );
 
   app.post(
     "/api/ai/business-data-analyst",
     authenticate,
+    enforceBusinessAIQuota,
     businessDataAnalyst
   );
 
   app.post(
     "/api/ai/business-document",
     authenticate,
+    enforceBusinessAIQuota,
     businessDocumentGenerator
   );
 
   app.post(
     "/api/ai/business-web-search",
     authenticate,
+    enforceBusinessAIQuota,
     businessWebSearch
   );
 
   app.post(
     "/api/ai/business-pdf",
     authenticate,
+    enforceBusinessAIQuota,
     upload.single("file"),
     businessPdfAI
   );

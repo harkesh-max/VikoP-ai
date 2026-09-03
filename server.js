@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
-import { register, login } from "./auth.js";
+import { register, login, authenticate } from "./auth.js";
 import { registerBusinessAIRoutes } from "./business-ai.js";
 import pool from "./db.js";
 import multer from "multer";
@@ -173,7 +173,7 @@ app.post(
         throw new Error("GEMINI_API_KEY is missing.");
       }
 
-      const tempDir = path.join(process.cwd(), ".tmp");
+    const tempDir = path.join(process.cwd(), ".tmp");
       await fs.mkdir(tempDir, { recursive: true });
 
       const safeName = String(originalName).replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -236,7 +236,196 @@ app.post(
 // Permanent VikoP Business AI routes
 registerBusinessAIRoutes(app);
 
-app.post("/chat", async (req, res) => {
+
+const PLAN_LIMITS = Object.freeze({
+  free: 15,
+  pro: 500,
+  business: 2000
+});
+
+async function reserveAIRequest(userId) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    let subscriptionResult = await client.query(
+      `
+      SELECT
+        plan,
+        status,
+        trial_ends_at,
+        current_period_end
+      FROM subscriptions
+      WHERE user_id = $1
+      FOR UPDATE
+      `,
+      [userId]
+    );
+
+    if (subscriptionResult.rows.length === 0) {
+      await client.query(
+        `
+        INSERT INTO subscriptions (
+          id,
+          user_id,
+          plan,
+          status
+        )
+        VALUES (gen_random_uuid(), $1, 'free', 'active')
+        ON CONFLICT (user_id) DO NOTHING
+        `,
+        [userId]
+      );
+
+      subscriptionResult = await client.query(
+        `
+        SELECT
+          plan,
+          status,
+          trial_ends_at,
+          current_period_end
+        FROM subscriptions
+        WHERE user_id = $1
+        FOR UPDATE
+        `,
+        [userId]
+      );
+    }
+
+    const subscription = subscriptionResult.rows[0];
+
+    let plan = subscription?.plan || "free";
+    let status = subscription?.status || "active";
+
+    if (
+      status === "trialing" &&
+      subscription?.trial_ends_at &&
+      new Date(subscription.trial_ends_at).getTime() <= Date.now()
+    ) {
+      plan = "free";
+      status = "expired";
+
+      await client.query(
+        `
+        UPDATE subscriptions
+        SET
+          plan = 'free',
+          status = 'expired',
+          updated_at = NOW()
+        WHERE user_id = $1
+        `,
+        [userId]
+      );
+    }
+
+    if (!PLAN_LIMITS[plan]) {
+      plan = "free";
+    }
+
+    const limit = PLAN_LIMITS[plan];
+
+    await client.query(
+      `
+      INSERT INTO usage_daily (
+        id,
+        user_id,
+        usage_date,
+        ai_requests
+      )
+      VALUES (
+        gen_random_uuid(),
+        $1,
+        CURRENT_DATE,
+        0
+      )
+      ON CONFLICT (user_id, usage_date) DO NOTHING
+      `,
+      [userId]
+    );
+
+    const usageResult = await client.query(
+      `
+      SELECT ai_requests
+      FROM usage_daily
+      WHERE user_id = $1
+        AND usage_date = CURRENT_DATE
+      FOR UPDATE
+      `,
+      [userId]
+    );
+
+    const used = Number(usageResult.rows[0]?.ai_requests || 0);
+
+    if (used >= limit) {
+      await client.query("ROLLBACK");
+
+      return {
+        allowed: false,
+        plan,
+        used,
+        limit
+      };
+    }
+
+    await client.query(
+      `
+      UPDATE usage_daily
+      SET
+        ai_requests = ai_requests + 1,
+        updated_at = NOW()
+      WHERE user_id = $1
+        AND usage_date = CURRENT_DATE
+      `,
+      [userId]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      allowed: true,
+      plan,
+      used: used + 1,
+      limit
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function releaseAIRequest(userId) {
+  try {
+    await pool.query(
+      `
+      UPDATE usage_daily
+      SET
+        ai_requests = GREATEST(ai_requests - 1, 0),
+        updated_at = NOW()
+      WHERE user_id = $1
+        AND usage_date = CURRENT_DATE
+      `,
+      [userId]
+    );
+  } catch (error) {
+    console.error("Failed to release AI usage:", error);
+  }
+}
+
+app.post("/chat", authenticate, async (req, res) => {
+  console.log("CHAT request received:", {
+    hasMessage: !!req.body?.message,
+    attachments: Array.isArray(req.body?.attachments)
+      ? req.body.attachments.map((f) => ({
+          name: f?.name,
+          mimeType: f?.mimeType,
+          hasFileUri: !!f?.fileUri
+        }))
+      : []
+  });
+
   const {
     message,
     history = [],
@@ -246,11 +435,35 @@ app.post("/chat", async (req, res) => {
     businessMode = false
   } = req.body;
 
+  let usageReserved = false;
+  let payloadPath = null;
+
   if (!message && history.length === 0) {
     return res.status(400).json({ error: "Message is required" });
   }
 
   try {
+    const usage = await reserveAIRequest(req.user.userId);
+
+    if (!usage.allowed) {
+      const upgradePlan =
+        usage.plan === "free"
+          ? "Pro"
+          : usage.plan === "pro"
+            ? "Business"
+            : "higher access";
+
+      return res.status(429).json({
+        error:
+          `Daily AI limit reached (${usage.limit} requests). Upgrade to ${upgradePlan} for more usage.`,
+        plan: usage.plan,
+        used: usage.used,
+        limit: usage.limit,
+        upgradeRequired: true
+      });
+    }
+
+    usageReserved = true;
     let rememberedName = "";
 
     for (const item of Array.isArray(history) ? history : []) {
@@ -295,47 +508,36 @@ app.post("/chat", async (req, res) => {
       systemInstruction += ` The user's name is "${rememberedName}". Remember this and use it when appropriate.`;
     }
 
-    const contents = [];
-
-    for (const item of Array.isArray(history) ? history : []) {
-      if (!item || !item.role) continue;
-
-      const parts = [];
-
-      if (item.text && String(item.text).trim()) {
-        parts.push({ text: String(item.text) });
-      }
-
-      if (Array.isArray(item.attachments)) {
-        for (const file of item.attachments) {
-          if (file?.fileUri && file?.mimeType) {
-            parts.push({
-              file_data: { mime_type: file.mimeType, file_uri: file.fileUri }
-            });
-          } else if (file?.data && file?.mimeType) {
-            parts.push({
-              inline_data: { mime_type: file.mimeType, data: file.data }
-            });
-          }
-        }
-      }
-
-      if (parts.length > 0) {
-        contents.push({
-          role: item.role === "assistant" ? "model" : "user",
-          parts
-        });
-      }
-    }
+    const hasPdfAttachment = [
+      ...(Array.isArray(attachments) ? attachments : []),
+    ].some(
+      (file) =>
+        file?.fileUri &&
+        (
+          file?.mimeType === "application/pdf" ||
+          /\.pdf$/i.test(String(file?.name || ""))
+        )
+    ) || (
+      Array.isArray(history) &&
+      history.some(
+        (item) =>
+          Array.isArray(item?.attachments) &&
+          item.attachments.some(
+            (file) =>
+              file?.fileUri &&
+              (
+                file?.mimeType === "application/pdf" ||
+                /\.pdf$/i.test(String(file?.name || ""))
+              )
+          )
+      )
+    );
 
     const currentParts = [];
 
-    if (message?.trim()) {
+    if (message && String(message).trim()) {
       currentParts.push({
-        text:
-          businessMode && String(businessKnowledge || "").trim()
-            ? "USER REQUEST:\n" + String(message).trim()
-            : String(message).trim()
+        text: String(message)
       });
     }
 
@@ -343,36 +545,327 @@ app.post("/chat", async (req, res) => {
       for (const file of attachments) {
         if (file?.fileUri && file?.mimeType) {
           currentParts.push({
-            file_data: { mime_type: file.mimeType, file_uri: file.fileUri }
+            file_data: {
+              mime_type: file.mimeType,
+              file_uri: file.fileUri
+            }
           });
         } else if (file?.data && file?.mimeType) {
           currentParts.push({
-            inline_data: { mime_type: file.mimeType, data: file.data }
+            inline_data: {
+              mime_type: file.mimeType,
+              data: file.data
+            }
           });
         }
       }
     }
 
-    if (currentParts.length > 0) {
-      contents.push({ role: "user", parts: currentParts });
+    const contents = [];
+
+    if (!hasPdfAttachment) {
+      for (const item of Array.isArray(history) ? history : []) {
+        if (!item || !item.role) continue;
+
+        const parts = [];
+
+        if (item.text && String(item.text).trim()) {
+          parts.push({ text: String(item.text) });
+        }
+
+        if (Array.isArray(item.attachments)) {
+          for (const file of item.attachments) {
+            if (file?.fileUri && file?.mimeType) {
+              parts.push({
+                file_data: {
+                  mime_type: file.mimeType,
+                  file_uri: file.fileUri
+                }
+              });
+            } else if (file?.data && file?.mimeType) {
+              parts.push({
+                inline_data: {
+                  mime_type: file.mimeType,
+                  data: file.data
+                }
+              });
+            }
+          }
+        }
+
+        if (parts.length > 0) {
+          contents.push({
+            role: item.role === "assistant" ? "model" : "user",
+            parts
+          });
+        }
+      }
+
+      if (currentParts.length > 0) {
+        contents.push({
+          role: "user",
+          parts: currentParts
+        });
+      }
     }
 
     if (!process.env.GEMINI_API_KEY) {
       throw new Error("GEMINI_API_KEY is missing.");
     }
 
-    const payload = JSON.stringify({
-      system_instruction: { parts: [{ text: systemInstruction }] },
-      contents,
-      generationConfig: { temperature: 0.7 }
-    });
+    const payload = hasPdfAttachment
+      ? null
+      : JSON.stringify({
+          system_instruction: { parts: [{ text: systemInstruction }] },
+          contents,
+          generationConfig: { temperature: 0.7 }
+        });
 
-    const tempDir = path.join(process.cwd(), ".tmp");
-    await fs.mkdir(tempDir, { recursive: true });
+    let pdfPayload = null;
 
-    const payloadPath = path.join(tempDir, `${Date.now()}-chat.json`);
+    if (hasPdfAttachment) {
+      // PDF-only speed optimization.
+      // Non-PDF requests remain unchanged.
+      const recentHistory = Array.isArray(history)
+        ? history.slice(-6)
+        : [];
+
+      const pdfContents = [];
+
+      for (const item of recentHistory) {
+        if (!item || !item.role) continue;
+
+        const parts = [];
+
+        if (item.text && String(item.text).trim()) {
+          const text = String(item.text);
+          parts.push({
+            text: text.length > 6000 ? text.slice(-6000) : text
+          });
+        }
+
+        if (Array.isArray(item.attachments)) {
+          for (const file of item.attachments) {
+            if (
+              file?.fileUri &&
+              file?.mimeType === "application/pdf"
+            ) {
+              parts.push({
+                file_data: {
+                  mime_type: file.mimeType,
+                  file_uri: file.fileUri
+                }
+              });
+            }
+          }
+        }
+
+        if (parts.length > 0) {
+          pdfContents.push({
+            role: item.role === "assistant" ? "model" : "user",
+            parts
+          });
+        }
+      }
+
+      if (currentParts.length > 0) {
+        pdfContents.push({
+          role: "user",
+          parts: currentParts
+        });
+      }
+
+      pdfPayload = JSON.stringify({
+        system_instruction: {
+          parts: [{ text: systemInstruction }]
+        },
+        contents: pdfContents,
+        generationConfig: { temperature: 0.7 }
+      });
+    }
 
     try {
+      /*
+       * PDF-ONLY SPEED PATH.
+       * Non-PDF requests continue using the existing request path.
+       */
+      if (hasPdfAttachment) {
+        console.log("PDF branch reached:", {
+          hasPdfAttachment,
+          pdfPayloadBytes: Buffer.byteLength(pdfPayload || "")
+        });
+
+        let geminiResponse = null;
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            geminiResponse = await fetch(
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": process.env.GEMINI_API_KEY
+                },
+                body: pdfPayload
+              }
+            );
+
+            if (geminiResponse.ok) {
+              console.log(`PDF Gemini attempt ${attempt + 1}: OK`);
+              break;
+            }
+
+            const errorText = await geminiResponse.text();
+
+            console.log(
+              `PDF Gemini attempt ${attempt + 1}: ${geminiResponse.status}`
+            );
+
+            if (geminiResponse.status !== 503 || attempt === 2) {
+              throw new Error(
+                `Gemini PDF stream failed (${geminiResponse.status}): ${errorText}`
+              );
+            }
+          } catch (error) {
+            if (attempt === 2) throw error;
+
+            console.log(
+              `PDF Gemini attempt ${attempt + 1}: FETCH ERROR - ${error?.message || error}`
+            );
+          }
+
+          await new Promise((resolve) =>
+            setTimeout(resolve, attempt === 0 ? 400 : 900)
+          );
+        }
+
+        if (!geminiResponse.body) {
+          throw new Error("Gemini PDF streaming response unavailable.");
+        }
+
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+
+        const reader = geminiResponse.body.getReader();
+        const decoder = new TextDecoder();
+
+        let streamBuffer = "";
+        let sentText = false;
+
+        while (true) {
+          const { value, done } = await reader.read();
+
+          if (done) break;
+
+          streamBuffer += decoder.decode(value, { stream: true });
+
+          const events = streamBuffer.split(/\r?\n\r?\n/);
+          streamBuffer = events.pop() || "";
+
+          for (const event of events) {
+            const dataLine = event
+              .split("\n")
+              .find((line) => line.startsWith("data:"));
+
+            if (!dataLine) continue;
+
+            const jsonText = dataLine.slice(5).trim();
+
+            if (!jsonText || jsonText === "[DONE]") continue;
+
+            let chunk;
+
+            try {
+              chunk = JSON.parse(jsonText);
+            } catch {
+              continue;
+            }
+
+            if (chunk?.error) {
+              throw new Error(
+                chunk.error.message ||
+                `Gemini API error (${chunk.error.code || 500}).`
+              );
+            }
+
+            const chunkText =
+              chunk?.candidates?.[0]?.content?.parts
+                ?.map((part) => part?.text || "")
+                .join("") || "";
+
+            if (chunkText) {
+              sentText = true;
+
+              res.write(
+                `data: ${JSON.stringify({ text: chunkText })}\n\n`
+              );
+            }
+          }
+        }
+
+        streamBuffer += decoder.decode();
+
+        if (streamBuffer.trim()) {
+          const finalEvents = streamBuffer.split(/\r?\n\r?\n/);
+
+          for (const event of finalEvents) {
+            const dataLine = event
+              .split("\n")
+              .find((line) => line.startsWith("data:"));
+
+            if (!dataLine) continue;
+
+            const jsonText = dataLine.slice(5).trim();
+
+            if (!jsonText || jsonText === "[DONE]") continue;
+
+            try {
+              const chunk = JSON.parse(jsonText);
+
+              if (chunk?.error) {
+                throw new Error(
+                  chunk.error.message ||
+                  `Gemini API error (${chunk.error.code || 500}).`
+                );
+              }
+
+              const chunkText =
+                chunk?.candidates?.[0]?.content?.parts
+                  ?.map((part) => part?.text || "")
+                  .join("") || "";
+
+              if (chunkText) {
+                sentText = true;
+
+                res.write(
+                  `data: ${JSON.stringify({ text: chunkText })}\n\n`
+                );
+              }
+            } catch (error) {
+              if (error?.message?.startsWith("Gemini")) {
+                throw error;
+              }
+            }
+          }
+        }
+
+        if (!sentText) {
+          throw new Error("Gemini returned an empty PDF response.");
+        }
+
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        return res.end();
+      }
+
+      /*
+       * EXISTING NON-PDF PATH — unchanged.
+       */
+      const tempDir = path.join(process.cwd(), ".tmp");
+      await fs.mkdir(tempDir, { recursive: true });
+      const payloadPath = path.join(tempDir, `${Date.now()}-chat.json`);
       await fs.writeFile(payloadPath, payload, "utf8");
 
       const { stdout } = await runCurl([
@@ -409,11 +902,16 @@ app.post("/chat", async (req, res) => {
       }
 
       if (data?.error) {
-        throw new Error(data.error.message || `Gemini API error (${data.error.code || 500}).`);
+        throw new Error(
+          data.error.message ||
+          `Gemini API error (${data.error.code || 500}).`
+        );
       }
 
       const text =
-        data?.candidates?.[0]?.content?.parts?.map((part) => part?.text || "").join("") || "";
+        data?.candidates?.[0]?.content?.parts
+          ?.map((part) => part?.text || "")
+          .join("") || "";
 
       if (!text) {
         throw new Error("Gemini returned an empty response.");
@@ -433,6 +931,10 @@ app.post("/chat", async (req, res) => {
       await fs.rm(payloadPath, { force: true }).catch(() => {});
     }
   } catch (error) {
+    if (usageReserved && req.user?.userId) {
+      await releaseAIRequest(req.user.userId);
+    }
+
     console.error("Gemini REST error:", error);
 
     if (error?.name === "AbortError") {
@@ -481,6 +983,45 @@ async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      plan TEXT NOT NULL DEFAULT 'free'
+        CHECK (plan IN ('free', 'pro', 'business')),
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'trialing', 'past_due', 'canceled', 'expired')),
+      trial_started_at TIMESTAMPTZ,
+      trial_ends_at TIMESTAMPTZ,
+      current_period_start TIMESTAMPTZ,
+      current_period_end TIMESTAMPTZ,
+      provider TEXT,
+      provider_customer_id TEXT,
+      provider_subscription_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_subscriptions_user
+      ON subscriptions(user_id);
+
+    CREATE INDEX IF NOT EXISTS idx_subscriptions_plan
+      ON subscriptions(plan);
+
+    CREATE TABLE IF NOT EXISTS usage_daily (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      ai_requests INTEGER NOT NULL DEFAULT 0,
+      pdf_requests INTEGER NOT NULL DEFAULT 0,
+      business_requests INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, usage_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_usage_daily_user_date
+      ON usage_daily(user_id, usage_date);
   `);
 
   console.log("Database tables ready.");
