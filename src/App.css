@@ -1388,3 +1388,282 @@ button {
     flex: 0 0 auto;
   }
 }
+
+
+/* VikoP PDF upload spinner — visual only */
+.selected-file.uploading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.selected-file.uploading::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: vikop-pdf-spinner 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes vikop-pdf-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/* ===== VIKOP PROFESSIONAL UI POLISH ===== */
+
+/* Global visual refinement */
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Header */
+.header {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+}
+
+.brand {
+  min-width: 0;
+}
+
+.brand-icon {
+  filter: drop-shadow(0 4px 12px rgba(79, 209, 255, 0.18));
+}
+
+.header h1 {
+  letter-spacing: -0.02em;
+}
+
+.header-button,
+.tool-button,
+.voice-button,
+.send-button,
+.copy-button,
+.regenerate-button,
+.business-tools-persistent button {
+  transition:
+    transform 0.16s ease,
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.header-button:hover,
+.tool-button:hover:not(:disabled),
+.voice-button:hover:not(:disabled),
+.send-button:hover:not(:disabled),
+.copy-button:hover:not(:disabled),
+.regenerate-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+/* Chat area */
+.chat {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(79, 209, 255, 0.28) transparent;
+}
+
+.chat::-webkit-scrollbar {
+  width: 7px;
+}
+
+.chat::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat::-webkit-scrollbar-thumb {
+  background: rgba(79, 209, 255, 0.22);
+  border-radius: 999px;
+}
+
+.welcome {
+  padding: 0 14px;
+}
+
+.robot {
+  filter: drop-shadow(0 8px 22px rgba(79, 209, 255, 0.13));
+}
+
+.welcome h2 {
+  letter-spacing: -0.03em;
+}
+
+.welcome p {
+  line-height: 1.6;
+}
+
+/* Messages */
+.message {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+}
+
+.message.user {
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.message.assistant {
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.message.assistant pre {
+  border: 1px solid rgba(100, 220, 230, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.answer-actions {
+  align-items: center;
+}
+
+/* File cards */
+.attachments {
+  margin-top: 2px;
+}
+
+.attachment-file {
+  border: 1px solid rgba(100, 220, 230, 0.12);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.10);
+}
+
+/* Composer */
+.input-area {
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.14);
+}
+
+.input-column > input {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    0 5px 18px rgba(0, 0, 0, 0.08);
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease;
+}
+
+.input-column > input:focus {
+  box-shadow:
+    0 0 0 3px rgba(49, 184, 208, 0.10),
+    0 7px 22px rgba(0, 0, 0, 0.10);
+}
+
+.tool-button {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.voice-button {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.send-button {
+  box-shadow:
+    0 7px 20px rgba(0, 0, 0, 0.16),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+/* Selected/uploading files */
+.selected-files {
+  padding-top: 1px;
+}
+
+.selected-file {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.selected-file.uploading {
+  border-color: rgba(79, 209, 255, 0.26);
+  background: rgba(49, 184, 208, 0.10);
+}
+
+/* Business tools */
+.business-tools-persistent {
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.business-tools-persistent button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 18px rgba(0, 0, 0, 0.12);
+}
+
+/* History */
+.history-panel {
+  box-shadow:
+    0 18px 45px rgba(0, 0, 0, 0.30),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.history-item {
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.history-item:hover {
+  transform: translateY(-1px);
+  background: rgba(15, 65, 80, 0.78);
+}
+
+/* Attachment menu */
+.input-area label,
+.input-area > div > button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Mobile refinement */
+@media (max-width: 600px) {
+  .chat {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .message {
+    max-width: 92%;
+    padding: 13px 15px;
+  }
+
+  .welcome {
+    margin-top: 14vh;
+  }
+
+  .welcome h2 {
+    font-size: 25px;
+  }
+
+  .welcome p {
+    font-size: 15px;
+  }
+
+  .input-area {
+    padding: 10px 8px 12px;
+  }
+
+  .tool-button,
+  .voice-button,
+  .send-button {
+    width: 46px;
+    height: 46px;
+    font-size: 19px;
+  }
+
+  .input-column > input {
+    padding: 13px 15px;
+    font-size: 15px;
+  }
+}

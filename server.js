@@ -644,22 +644,6 @@ app.post("/chat", authenticate, async (req, res) => {
           });
         }
 
-        if (Array.isArray(item.attachments)) {
-          for (const file of item.attachments) {
-            if (
-              file?.fileUri &&
-              file?.mimeType === "application/pdf"
-            ) {
-              parts.push({
-                file_data: {
-                  mime_type: file.mimeType,
-                  file_uri: file.fileUri
-                }
-              });
-            }
-          }
-        }
-
         if (parts.length > 0) {
           pdfContents.push({
             role: item.role === "assistant" ? "model" : "user",

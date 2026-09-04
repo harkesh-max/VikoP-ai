@@ -1947,7 +1947,10 @@ ${userMessage}`
           {selectedFiles.length > 0 && (
             <div className="selected-files">
               {selectedFiles.map((file, index) => (
-                <div key={index} className="selected-file">
+                <div
+                  key={index}
+                  className={`selected-file${file.uploading ? " uploading" : ""}`}
+                >
                   <span>
                     {file.mimeType?.startsWith("image/")
                       ? "🖼️"
