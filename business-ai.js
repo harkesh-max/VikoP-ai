@@ -382,22 +382,35 @@ async function addLead(req, res) {
     }
 
     const normalizedContact = normalizeLeadContactServer(cleanContact);
+    const normalizedName = String(cleanName || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
 
-    if (normalizedContact) {
-      const existing = await pool.query(
-        `SELECT id
-         FROM leads
-         WHERE business_id = $1
-           AND lower(regexp_replace(COALESCE(contact, ''), '\\s+', '', 'g')) = $2
-         LIMIT 1`,
-        [req.user.businessId, normalizedContact]
-      );
+    const existing = await pool.query(
+      `SELECT id
+       FROM leads
+       WHERE business_id = $1
+         AND (
+           (
+             $2 <> ''
+             AND lower(regexp_replace(COALESCE(contact, ''), '\\s+', '', 'g')) = $2
+           )
+           OR
+           (
+             $3 <> ''
+             AND $2 = ''
+             AND lower(regexp_replace(trim(COALESCE(name, '')), '\\s+', ' ', 'g')) = $3
+           )
+         )
+       LIMIT 1`,
+      [req.user.businessId, normalizedContact, normalizedName]
+    );
 
-      if (existing.rows.length > 0) {
-        return res.status(409).json({
-          error: "This lead already exists."
-        });
-      }
+    if (existing.rows.length > 0) {
+      return res.status(409).json({
+        error: "This lead already exists."
+      });
     }
 
     const result = await pool.query(
