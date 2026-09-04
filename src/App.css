@@ -1667,3 +1667,24 @@ button {
     font-size: 15px;
   }
 }
+
+/* ===== VIKOP HEADER ALIGNMENT FIX ===== */
+.header-top {
+  justify-content: flex-start;
+}
+
+.brand {
+  flex: 0 0 auto;
+}
+
+.header-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.header-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* ===== END VIKOP HEADER ALIGNMENT FIX ===== */
