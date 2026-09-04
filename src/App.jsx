@@ -12,6 +12,26 @@ const BUSINESS_CHAT_KEY = "vikop-business-chat";
 const CHAT_HISTORY_KEY = "vikop-chat-history";
 const BUSINESS_HISTORY_KEY = "vikop-business-history";
 
+function getAccountId(user) {
+  const id = user?.id ?? user?.userId ?? user?.email ?? null;
+  if (id === null || id === undefined) return null;
+  return String(id).trim().toLowerCase();
+}
+
+function getAccountStorageKey(baseKey, user) {
+  const accountId = getAccountId(user);
+  return accountId ? `${baseKey}:${accountId}` : null;
+}
+
+function readStoredJson(key, fallback = []) {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function createChatId() {
   return Date.now().toString() + Math.random().toString(36).slice(2, 8);
 }
@@ -73,23 +93,8 @@ function logoutBusiness() {
 }
 
 
-  const [chatMessages, setChatMessages] = useState(() => {
-    try {
-      const saved = localStorage.getItem(CURRENT_CHAT_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const [businessMessages, setBusinessMessages] = useState(() => {
-    try {
-      const saved = localStorage.getItem(BUSINESS_CHAT_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [chatMessages, setChatMessages] = useState([]);
+  const [businessMessages, setBusinessMessages] = useState([]);
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -101,42 +106,17 @@ function logoutBusiness() {
   const [showBusinessCRM, setShowBusinessCRM] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
 
-  const [businessKnowledge, setBusinessKnowledge] = useState(() => {
-    try {
-      return localStorage.getItem("vikop-business-knowledge") || "";
-    } catch {
-      return "";
-    }
-  });
-
-  const [industryMode, setIndustryMode] = useState(() => {
-    try {
-      return localStorage.getItem("vikop-industry-mode") || "general";
-    } catch {
-      return "general";
-    }
-  });
+  const [businessKnowledge, setBusinessKnowledge] = useState("");
+  const [industryMode, setIndustryMode] = useState("general");
 
   const [businessLeads, setBusinessLeads] = useState([]);
   const [businessLeadsLoading, setBusinessLeadsLoading] = useState(false);
 
-  const [chatHistory, setChatHistory] = useState(() => {
-    try {
-      const saved = localStorage.getItem(CHAT_HISTORY_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [chatHistory, setChatHistory] = useState([]);
+  const [businessHistory, setBusinessHistory] = useState([]);
 
-  const [businessHistory, setBusinessHistory] = useState(() => {
-    try {
-      const saved = localStorage.getItem(BUSINESS_HISTORY_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const accountStorageReadyRef = useRef(false);
+  const accountStorageIdRef = useRef(null);
 
   const [activeChatId, setActiveChatId] = useState(null);
   const [activeBusinessChatId, setActiveBusinessChatId] = useState(null);
@@ -258,34 +238,195 @@ function logoutBusiness() {
   const recognitionRef = useRef(null);
 
   useEffect(() => {
+    const accountId = getAccountId(authUser);
+
+    accountStorageReadyRef.current = false;
+    accountStorageIdRef.current = accountId;
+
+    if (!accountId) {
+      setChatMessages([]);
+      setBusinessMessages([]);
+      setChatHistory([]);
+      setBusinessHistory([]);
+      setBusinessKnowledge("");
+      setIndustryMode("general");
+      setActiveChatId(null);
+      setActiveBusinessChatId(null);
+      return;
+    }
+
+    const migrateLegacyJson = (scopedKey, legacyKey, fallback) => {
+      const scopedValue = localStorage.getItem(scopedKey);
+
+      if (scopedValue !== null) {
+        return readStoredJson(scopedKey, fallback);
+      }
+
+      const legacyValue = localStorage.getItem(legacyKey);
+
+      if (legacyValue !== null) {
+        localStorage.setItem(scopedKey, legacyValue);
+        localStorage.removeItem(legacyKey);
+        return readStoredJson(scopedKey, fallback);
+      }
+
+      return fallback;
+    };
+
+    const migrateLegacyValue = (scopedKey, legacyKey, fallback) => {
+      const scopedValue = localStorage.getItem(scopedKey);
+
+      if (scopedValue !== null) {
+        return scopedValue;
+      }
+
+      const legacyValue = localStorage.getItem(legacyKey);
+
+      if (legacyValue !== null) {
+        localStorage.setItem(scopedKey, legacyValue);
+        localStorage.removeItem(legacyKey);
+        return legacyValue;
+      }
+
+      return fallback;
+    };
+
+    const currentChatKey = getAccountStorageKey(
+      CURRENT_CHAT_KEY,
+      authUser
+    );
+    const businessChatKey = getAccountStorageKey(
+      BUSINESS_CHAT_KEY,
+      authUser
+    );
+    const chatHistoryKey = getAccountStorageKey(
+      CHAT_HISTORY_KEY,
+      authUser
+    );
+    const businessHistoryKey = getAccountStorageKey(
+      BUSINESS_HISTORY_KEY,
+      authUser
+    );
+    const businessKnowledgeKey = getAccountStorageKey(
+      "vikop-business-knowledge",
+      authUser
+    );
+    const industryModeKey = getAccountStorageKey(
+      "vikop-industry-mode",
+      authUser
+    );
+
+    setChatMessages(
+      migrateLegacyJson(currentChatKey, CURRENT_CHAT_KEY, [])
+    );
+
+    setBusinessMessages(
+      migrateLegacyJson(businessChatKey, BUSINESS_CHAT_KEY, [])
+    );
+
+    setChatHistory(
+      migrateLegacyJson(chatHistoryKey, CHAT_HISTORY_KEY, [])
+    );
+
+    setBusinessHistory(
+      migrateLegacyJson(
+        businessHistoryKey,
+        BUSINESS_HISTORY_KEY,
+        []
+      )
+    );
+
+    setBusinessKnowledge(
+      migrateLegacyValue(
+        businessKnowledgeKey,
+        "vikop-business-knowledge",
+        ""
+      )
+    );
+
+    setIndustryMode(
+      migrateLegacyValue(
+        industryModeKey,
+        "vikop-industry-mode",
+        "general"
+      )
+    );
+
+    setActiveChatId(null);
+    setActiveBusinessChatId(null);
+
+    accountStorageReadyRef.current = true;
+  }, [authUser]);
+
+  useEffect(() => {
+    const key = getAccountStorageKey(CURRENT_CHAT_KEY, authUser);
+
+    if (
+      !accountStorageReadyRef.current ||
+      !key ||
+      accountStorageIdRef.current !== getAccountId(authUser)
+    ) {
+      return;
+    }
+
     try {
-      localStorage.setItem(
-        CURRENT_CHAT_KEY,
-        JSON.stringify(chatMessages)
-      );
+      localStorage.setItem(key, JSON.stringify(chatMessages));
     } catch (error) {
       console.error("Chat save failed:", error);
     }
-  }, [chatMessages]);
+  }, [chatMessages, authUser]);
 
   useEffect(() => {
+    const key = getAccountStorageKey(BUSINESS_CHAT_KEY, authUser);
+
+    if (
+      !accountStorageReadyRef.current ||
+      !key ||
+      accountStorageIdRef.current !== getAccountId(authUser)
+    ) {
+      return;
+    }
+
     try {
-      localStorage.setItem(
-        BUSINESS_CHAT_KEY,
-        JSON.stringify(businessMessages)
-      );
+      localStorage.setItem(key, JSON.stringify(businessMessages));
     } catch (error) {
       console.error("Business chat save failed:", error);
     }
-  }, [businessMessages]);
+  }, [businessMessages, authUser]);
 
   useEffect(() => {
-    localStorage.setItem("vikop-business-knowledge", businessKnowledge);
-  }, [businessKnowledge]);
+    const key = getAccountStorageKey(
+      "vikop-business-knowledge",
+      authUser
+    );
+
+    if (
+      !accountStorageReadyRef.current ||
+      !key ||
+      accountStorageIdRef.current !== getAccountId(authUser)
+    ) {
+      return;
+    }
+
+    localStorage.setItem(key, businessKnowledge);
+  }, [businessKnowledge, authUser]);
 
   useEffect(() => {
-    localStorage.setItem("vikop-industry-mode", industryMode);
-  }, [industryMode]);
+    const key = getAccountStorageKey(
+      "vikop-industry-mode",
+      authUser
+    );
+
+    if (
+      !accountStorageReadyRef.current ||
+      !key ||
+      accountStorageIdRef.current !== getAccountId(authUser)
+    ) {
+      return;
+    }
+
+    localStorage.setItem(key, industryMode);
+  }, [industryMode, authUser]);
 
 
   useEffect(() => {
@@ -295,15 +436,38 @@ function logoutBusiness() {
   }, [appMode, authToken]);
 
   useEffect(() => {
-    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory));
-  }, [chatHistory]);
+    const key = getAccountStorageKey(CHAT_HISTORY_KEY, authUser);
+
+    if (
+      !accountStorageReadyRef.current ||
+      !key ||
+      accountStorageIdRef.current !== getAccountId(authUser)
+    ) {
+      return;
+    }
+
+    localStorage.setItem(key, JSON.stringify(chatHistory));
+  }, [chatHistory, authUser]);
 
   useEffect(() => {
-    localStorage.setItem(
+    const key = getAccountStorageKey(
       BUSINESS_HISTORY_KEY,
+      authUser
+    );
+
+    if (
+      !accountStorageReadyRef.current ||
+      !key ||
+      accountStorageIdRef.current !== getAccountId(authUser)
+    ) {
+      return;
+    }
+
+    localStorage.setItem(
+      key,
       JSON.stringify(businessHistory)
     );
-  }, [businessHistory]);
+  }, [businessHistory, authUser]);
 
   useEffect(() => {
     if (messages.length === 0) return;
