@@ -19,6 +19,175 @@ app.get("/", (req, res) => {
   res.sendFile("index.html", { root: "dist" });
 });
 
+app.get("/terms", (req, res) => {
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VikoP — Terms & Conditions</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#f6f7fb;color:#171923}
+main{max-width:860px;margin:0 auto;padding:28px 18px 60px}
+.card{background:#fff;border-radius:18px;padding:28px;box-shadow:0 6px 24px rgba(0,0,0,.06)}
+h1{margin-top:0}h2{margin-top:28px}p,li{line-height:1.7}
+a{color:#4f46e5;text-decoration:none}
+.small{color:#666;font-size:14px}
+</style>
+</head>
+<body>
+<main><div class="card">
+<h1>VikoP — Terms &amp; Conditions</h1>
+<p class="small">Effective date: September 6, 2026</p>
+
+<p>These Terms &amp; Conditions govern your use of VikoP and its related AI, business, document and productivity services.</p>
+
+<h2>1. Use of VikoP</h2>
+<p>You may use VikoP only for lawful purposes and in accordance with these Terms. You are responsible for the information, files, prompts and other content you submit to the service.</p>
+
+<h2>2. AI-generated content</h2>
+<p>VikoP uses artificial intelligence to generate responses and other outputs. AI output may be inaccurate, incomplete or unsuitable for a particular purpose. You are responsible for reviewing outputs before relying on or distributing them.</p>
+
+<h2>3. Accounts and security</h2>
+<p>You are responsible for maintaining the security of your account credentials and for activity performed through your account. Do not share your password or access credentials with unauthorized users.</p>
+
+<h2>4. Pro subscriptions</h2>
+<p>Paid features may be offered through subscription plans displayed on VikoP. Prices, included features and billing frequency will be shown before purchase. A subscription may renew automatically where applicable until cancelled.</p>
+
+<h2>5. Acceptable use</h2>
+<p>You must not use VikoP to violate applicable law, infringe intellectual-property rights, distribute harmful or unlawful material, attempt unauthorized access, interfere with the service, or misuse the service to harm others.</p>
+
+<h2>6. Intellectual property</h2>
+<p>VikoP and its underlying software, branding and service materials remain the property of their respective owners. You retain rights to content you submit, subject to the rights necessary to provide the service.</p>
+
+<h2>7. Service availability</h2>
+<p>We may modify, suspend or discontinue features when reasonably necessary for maintenance, security, legal compliance or product improvements.</p>
+
+<h2>8. Limitation</h2>
+<p>To the extent permitted by applicable law, VikoP is provided on an as-available basis and we do not guarantee that AI-generated results will always be accurate, uninterrupted or error-free.</p>
+
+<h2>9. Changes</h2>
+<p>These Terms may be updated from time to time. Continued use of VikoP after an update constitutes acceptance of the revised Terms, subject to applicable law.</p>
+
+<h2>10. Contact</h2>
+<p>For questions regarding these Terms, please use the support/contact method made available on the VikoP service.</p>
+
+<p><a href="/">← Back to VikoP</a></p>
+</div></main>
+</body>
+</html>`);
+});
+
+app.get("/privacy", (req, res) => {
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VikoP — Privacy Policy</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#f6f7fb;color:#171923}
+main{max-width:860px;margin:0 auto;padding:28px 18px 60px}
+.card{background:#fff;border-radius:18px;padding:28px;box-shadow:0 6px 24px rgba(0,0,0,.06)}
+h1{margin-top:0}h2{margin-top:28px}p,li{line-height:1.7}
+a{color:#4f46e5;text-decoration:none}
+.small{color:#666;font-size:14px}
+</style>
+</head>
+<body>
+<main><div class="card">
+<h1>VikoP — Privacy Policy</h1>
+<p class="small">Effective date: September 6, 2026</p>
+
+<p>This Privacy Policy explains how VikoP may collect, use and protect information when you use the VikoP service.</p>
+
+<h2>1. Information we may collect</h2>
+<p>Depending on the features you use, VikoP may process account information, authentication information, prompts and messages, uploaded files, usage information and technical information needed to operate and secure the service.</p>
+
+<h2>2. How information is used</h2>
+<p>Information may be used to provide and maintain VikoP, authenticate users, process requests, improve reliability and security, enforce service rules, provide customer support, and operate paid features.</p>
+
+<h2>3. Uploaded content</h2>
+<p>Files and other content that you choose to submit may be processed to provide requested AI or document features. Do not upload information that you are not authorized to share.</p>
+
+<h2>4. Payments</h2>
+<p>When paid services are introduced, payment processing may be handled by third-party payment providers. Payment providers may process payment information according to their own privacy policies and applicable requirements.</p>
+
+<h2>5. Data retention</h2>
+<p>We retain information only for as long as reasonably necessary for the purposes described in this policy, including service operation, security, legal and accounting requirements.</p>
+
+<h2>6. Security</h2>
+<p>We use reasonable technical and organizational measures designed to protect information against unauthorized access, alteration, disclosure or destruction. No internet service can guarantee absolute security.</p>
+
+<h2>7. Third-party services</h2>
+<p>VikoP may rely on third-party infrastructure and service providers to host, secure, process or deliver parts of the service. Their processing is subject to their applicable terms and privacy policies.</p>
+
+<h2>8. Your choices</h2>
+<p>Depending on applicable law, you may have rights regarding your personal information. Requests may be made through the support/contact method made available on the VikoP service.</p>
+
+<h2>9. Policy changes</h2>
+<p>This Privacy Policy may be updated from time to time. The effective date above will be updated when material changes are made.</p>
+
+<h2>10. Contact</h2>
+<p>For privacy questions or requests, please use the support/contact method made available on the VikoP service.</p>
+
+<p><a href="/">← Back to VikoP</a></p>
+</div></main>
+</body>
+</html>`);
+});
+
+app.get("/refund", (req, res) => {
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VikoP — Refund & Cancellation Policy</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#f6f7fb;color:#171923}
+main{max-width:860px;margin:0 auto;padding:28px 18px 60px}
+.card{background:#fff;border-radius:18px;padding:28px;box-shadow:0 6px 24px rgba(0,0,0,.06)}
+h1{margin-top:0}h2{margin-top:28px}p,li{line-height:1.7}
+a{color:#4f46e5;text-decoration:none}
+.small{color:#666;font-size:14px}
+</style>
+</head>
+<body>
+<main><div class="card">
+<h1>VikoP — Refund, Return &amp; Cancellation Policy</h1>
+<p class="small">Effective date: September 6, 2026</p>
+
+<h2>1. Digital service</h2>
+<p>VikoP is a digital software service. No physical goods are shipped, so physical return and shipping procedures do not apply.</p>
+
+<h2>2. Subscription cancellation</h2>
+<p>You may cancel a recurring subscription through the cancellation method provided with the service. Cancellation stops future renewals, subject to the billing terms shown at purchase.</p>
+
+<h2>3. Refund eligibility</h2>
+<p>Because VikoP provides a digital service that may be made available immediately after purchase, payments are generally non-refundable once the paid service has been activated, except where a refund is required by applicable law or where VikoP expressly approves a refund.</p>
+
+<h2>4. Duplicate or incorrect charges</h2>
+<p>If you believe you were charged twice for the same purchase, or charged because of a clear billing error, contact VikoP through the support/contact method made available on the service. We will review the transaction and, where appropriate, process the approved refund.</p>
+
+<h2>5. How to request a refund</h2>
+<p>Submit your refund request through the support/contact method made available on the VikoP service and include the account information and transaction details necessary to identify the purchase.</p>
+
+<h2>6. Refund processing timeline</h2>
+<p>Approved refunds will be initiated by VikoP within a reasonable processing period after approval. The time for the refunded amount to appear in your account may additionally depend on the payment provider and your bank or card issuer.</p>
+
+<h2>7. Service issues</h2>
+<p>If a material technical problem prevents access to a paid feature, report the issue through the support/contact method made available on the service so that we can investigate and, where appropriate, provide a remedy consistent with applicable law and the circumstances.</p>
+
+<h2>8. Policy changes</h2>
+<p>This policy may be updated when our service, pricing or legal requirements change. The effective date above will be updated for material changes.</p>
+
+<p><a href="/">← Back to VikoP</a></p>
+</div></main>
+</body>
+</html>`);
+});
+
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY
 });
@@ -664,7 +833,12 @@ app.post("/chat", authenticate, async (req, res) => {
           parts: [{ text: systemInstruction }]
         },
         contents: pdfContents,
-        generationConfig: { temperature: 0.7 }
+        generationConfig: {
+          temperature: 0.7,
+          thinkingConfig: {
+            thinkingLevel: "minimal"
+          }
+        }
       });
     }
 
@@ -845,72 +1019,162 @@ app.post("/chat", authenticate, async (req, res) => {
       }
 
       /*
-       * EXISTING NON-PDF PATH — unchanged.
+       * NORMAL CHAT SPEED PATH.
+       * Non-PDF only. PDF path and all other features remain unchanged.
        */
-      const tempDir = path.join(process.cwd(), ".tmp");
-      await fs.mkdir(tempDir, { recursive: true });
-      const payloadPath = path.join(tempDir, `${Date.now()}-chat.json`);
-      await fs.writeFile(payloadPath, payload, "utf8");
+      let geminiResponse = null;
+      let lastError = null;
 
-      const { stdout } = await runCurl([
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
-        "--http1.1",
-        "--max-time",
-        "180",
-        "--connect-timeout",
-        "30",
-        "--retry",
-        "3",
-        "--retry-delay",
-        "3",
-        "--retry-all-errors",
-        "-sS",
-        "-H",
-        "Expect:",
-        "-H",
-        "Content-Type: application/json",
-        "-H",
-        `x-goog-api-key: ${process.env.GEMINI_API_KEY}`,
-        "-X",
-        "POST",
-        "--data-binary",
-        `@${payloadPath}`
-      ]);
-
-      let data;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
 
       try {
-        data = JSON.parse(stdout);
-      } catch {
-        throw new Error("Gemini returned invalid JSON.");
-      }
-
-      if (data?.error) {
-        throw new Error(
-          data.error.message ||
-          `Gemini API error (${data.error.code || 500}).`
+        geminiResponse = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:streamGenerateContent?alt=sse",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": process.env.GEMINI_API_KEY
+            },
+            body: payload,
+            signal: controller.signal
+          }
         );
+
+        if (!geminiResponse.ok) {
+          const errorText = await geminiResponse.text();
+          throw new Error(
+            `Gemini API error (${geminiResponse.status}): ${errorText.slice(0, 500)}`
+          );
+        }
+
+        if (!geminiResponse.body) {
+          throw new Error("Gemini streaming response unavailable.");
+        }
+
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+
+        const reader = geminiResponse.body.getReader();
+        const decoder = new TextDecoder();
+
+        let streamBuffer = "";
+        let sentText = false;
+
+        while (true) {
+          const { value, done } = await reader.read();
+
+          if (done) break;
+
+          streamBuffer += decoder.decode(value, { stream: true });
+
+          const events = streamBuffer.split(/\r?\n\r?\n/);
+          streamBuffer = events.pop() || "";
+
+          for (const event of events) {
+            const dataLine = event
+              .split("\n")
+              .find((line) => line.startsWith("data:"));
+
+            if (!dataLine) continue;
+
+            const jsonText = dataLine.slice(5).trim();
+
+            if (!jsonText || jsonText === "[DONE]") continue;
+
+            let chunk;
+
+            try {
+              chunk = JSON.parse(jsonText);
+            } catch {
+              continue;
+            }
+
+            if (chunk?.error) {
+              throw new Error(
+                chunk.error.message ||
+                `Gemini API error (${chunk.error.code || 500}).`
+              );
+            }
+
+            const chunkText =
+              chunk?.candidates?.[0]?.content?.parts
+                ?.map((part) => part?.text || "")
+                .join("") || "";
+
+            if (chunkText) {
+              sentText = true;
+              res.write(
+                `data: ${JSON.stringify({ text: chunkText })}\n\n`
+              );
+            }
+          }
+        }
+
+        streamBuffer += decoder.decode();
+
+        if (streamBuffer.trim()) {
+          for (const event of streamBuffer.split(/\r?\n\r?\n/)) {
+            const dataLine = event
+              .split("\n")
+              .find((line) => line.startsWith("data:"));
+
+            if (!dataLine) continue;
+
+            const jsonText = dataLine.slice(5).trim();
+
+            if (!jsonText || jsonText === "[DONE]") continue;
+
+            try {
+              const chunk = JSON.parse(jsonText);
+
+              if (chunk?.error) {
+                throw new Error(
+                  chunk.error.message ||
+                  `Gemini API error (${chunk.error.code || 500}).`
+                );
+              }
+
+              const chunkText =
+                chunk?.candidates?.[0]?.content?.parts
+                  ?.map((part) => part?.text || "")
+                  .join("") || "";
+
+              if (chunkText) {
+                sentText = true;
+                res.write(
+                  `data: ${JSON.stringify({ text: chunkText })}\n\n`
+                );
+              }
+            } catch (error) {
+              if (error?.message?.startsWith("Gemini")) {
+                throw error;
+              }
+            }
+          }
+        }
+
+        if (!sentText) {
+          throw new Error("Gemini returned an empty response.");
+        }
+
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        return res.end();
+      } catch (error) {
+        lastError = error;
+
+        if (error?.name === "AbortError") {
+          throw new Error("Gemini request timed out after 30 seconds.");
+        }
+
+        throw lastError;
+      } finally {
+        clearTimeout(timeout);
       }
 
-      const text =
-        data?.candidates?.[0]?.content?.parts
-          ?.map((part) => part?.text || "")
-          .join("") || "";
-
-      if (!text) {
-        throw new Error("Gemini returned an empty response.");
-      }
-
-      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-
-      res.flushHeaders();
-
-      res.write(`data: ${JSON.stringify({ text })}\n\n`);
-      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-
-      res.end();
     } finally {
       await fs.rm(payloadPath, { force: true }).catch(() => {});
     }
