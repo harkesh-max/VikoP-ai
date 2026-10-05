@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Local temporary uploads and generated files
+.tmp/
+
+# Local safety backups
+*.before-*
