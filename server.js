@@ -1223,6 +1223,21 @@ async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS leads (
+      id UUID PRIMARY KEY,
+      business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      contact TEXT,
+      status TEXT NOT NULL DEFAULT 'new'
+        CHECK (status IN ('new', 'warm', 'hot', 'cold')),
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_leads_business
+      ON leads(business_id);
+
     CREATE TABLE IF NOT EXISTS knowledge_base (
       id UUID PRIMARY KEY,
       business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
