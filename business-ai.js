@@ -441,7 +441,7 @@ async function addLead(req, res) {
       column: error?.column
     });
     res.status(500).json({
-      error: `Lead save failed: ${error?.message || "Unknown database error"}`
+      error: "Lead save failed. Please try again."
     });
   }
 }

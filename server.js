@@ -6,13 +6,99 @@ import { register, login, authenticate } from "./auth.js";
 import { registerBusinessAIRoutes } from "./business-ai.js";
 import pool from "./db.js";
 import multer from "multer";
+import { rateLimit } from "express-rate-limit";
+import helmet from "helmet";
 
 dotenv.config();
 
 const app = express();
 
-app.use(cors());
-app.use(express.json({ limit: "100mb" }));
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+app.disable("x-powered-by");
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false
+  })
+);
+
+const allowedOrigins = new Set(
+  (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .concat([
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://localhost:5174",
+      "http://127.0.0.1:5174"
+    ])
+);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(null, false);
+    }
+  })
+);
+
+app.use(express.json({ limit: "10mb" }));
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: "Too many authentication attempts. Please try again later."
+    });
+  }
+});
+
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: "Too many AI requests. Please slow down and try again."
+    });
+  }
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: "Too many file uploads. Please try again later."
+    });
+  }
+});
+
+const businessLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: "Too many requests. Please slow down and try again."
+    });
+  }
+});
 app.use(express.static("dist"));
 
 app.get("/", (req, res) => {
@@ -199,8 +285,8 @@ const pdfUpload = multer({
   }
 });
 
-app.post("/api/auth/register", register);
-app.post("/api/auth/login", login);
+app.post("/api/auth/register", authLimiter, register);
+app.post("/api/auth/login", authLimiter, login);
 
 const { execFile } = await import("child_process");
 const { promisify } = await import("util");
@@ -219,11 +305,12 @@ async function runCurl(args, options = {}) {
 // ⚡ FAST single-request upload (multipart) — session-start round trip hata diya
 app.post(
   "/api/upload-pdf-stream",
+  uploadLimiter,
   express.raw({ type: "application/pdf", limit: "50mb" }),
   async (req, res) => {
     try {
       if (!process.env.GEMINI_API_KEY) {
-        return res.status(500).json({ error: "GEMINI_API_KEY is missing." });
+        return res.status(500).json({ error: "AI service is temporarily unavailable." });
       }
 
       const pdfBuffer = req.body;
@@ -307,7 +394,7 @@ app.post(
 
       if (!res.headersSent) {
         return res.status(500).json({
-          error: error?.message || "PDF streaming upload failed."
+          error: "PDF upload failed. Please try again."
         });
       }
     }
@@ -316,6 +403,7 @@ app.post(
 
 app.post(
   "/api/upload-pdf",
+  uploadLimiter,
   pdfUpload.single("file"),
   async (req, res) => {
     let tempPath = null;
@@ -388,7 +476,7 @@ app.post(
       );
 
       return res.status(500).json({
-        error: (error && error.message) || "PDF upload failed."
+        error: "PDF upload failed. Please try again."
       });
     } finally {
       if (tempPath) {
@@ -401,6 +489,10 @@ app.post(
     }
   }
 );
+
+// Rate-limit Business AI API traffic.
+app.use("/api/business", businessLimiter);
+app.use("/api/ai", chatLimiter);
 
 // Permanent VikoP Business AI routes
 registerBusinessAIRoutes(app);
@@ -583,7 +675,7 @@ async function releaseAIRequest(userId) {
   }
 }
 
-app.post("/chat", authenticate, async (req, res) => {
+app.post("/chat", chatLimiter, authenticate, async (req, res) => {
   console.log("CHAT request received:", {
     hasMessage: !!req.body?.message,
     attachments: Array.isArray(req.body?.attachments)
@@ -1197,10 +1289,10 @@ app.post("/chat", authenticate, async (req, res) => {
     }
 
     if (!res.headersSent) {
-      return res.status(500).json({ error: error?.message || "Gemini request failed." });
+      return res.status(500).json({ error: "AI service request failed. Please try again." });
     }
 
-    res.write(`data: ${JSON.stringify({ error: error?.message || "Gemini request failed." })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: "AI service request failed. Please try again." })}\n\n`);
     res.end();
   }
 });
