@@ -20,6 +20,11 @@ export default function BusinessDashboard({ token, onClose }) {
   const [documentAudience, setDocumentAudience] = useState("");
   const [documentRequirements, setDocumentRequirements] = useState("");
   const [documentResult, setDocumentResult] = useState("");
+  const [outlineGoal, setOutlineGoal] = useState("");
+  const [outlineAudience, setOutlineAudience] = useState("");
+  const [outlineTimeframe, setOutlineTimeframe] = useState("");
+  const [outlineRequirements, setOutlineRequirements] = useState("");
+  const [outlineResult, setOutlineResult] = useState("");
   const [webQuery, setWebQuery] = useState("");
   const [webResult, setWebResult] = useState("");
   const [pdfFile, setPdfFile] = useState(null);
@@ -243,6 +248,39 @@ export default function BusinessDashboard({ token, onClose }) {
     }
   }
 
+  async function generateBusinessOutline() {
+    if (!outlineGoal.trim()) return;
+
+    try {
+      setLoading(true);
+      setError("");
+      setOutlineResult("");
+
+      const response = await fetch(`${API}/ai/business-outline`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          goal: outlineGoal,
+          audience: outlineAudience,
+          timeframe: outlineTimeframe,
+          requirements: outlineRequirements
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Business outline generation failed.");
+      }
+
+      setOutlineResult(data.outline || "");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function searchBusinessWeb() {
     if (!webQuery.trim()) return;
 
@@ -366,6 +404,13 @@ export default function BusinessDashboard({ token, onClose }) {
           onClick={() => setTab("documents")}
         >
           📄 Business Document Generator
+        </button>
+
+        <button
+          className={tab === "outline" ? "active" : ""}
+          onClick={() => setTab("outline")}
+        >
+          🗂️ Business Outline
         </button>
 
         <button
@@ -580,6 +625,56 @@ export default function BusinessDashboard({ token, onClose }) {
             <div className="ai-result">
               <h4>{documentType}</h4>
               <p>{documentResult}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "outline" && (
+        <div className="business-section">
+          <h3>🗂️ Business Outline</h3>
+          <p>
+            Turn a business goal into a clear, practical and actionable outline.
+          </p>
+
+          <textarea
+            value={outlineGoal}
+            onChange={(e) => setOutlineGoal(e.target.value)}
+            placeholder="Example: Create a 30-day customer acquisition plan for our gym..."
+            rows={5}
+          />
+
+          <input
+            value={outlineAudience}
+            onChange={(e) => setOutlineAudience(e.target.value)}
+            placeholder="Target audience (optional)"
+          />
+
+          <input
+            value={outlineTimeframe}
+            onChange={(e) => setOutlineTimeframe(e.target.value)}
+            placeholder="Timeframe (optional), e.g. 30 days"
+          />
+
+          <textarea
+            value={outlineRequirements}
+            onChange={(e) => setOutlineRequirements(e.target.value)}
+            placeholder="Additional requirements (optional)"
+            rows={4}
+          />
+
+          <button
+            className="primary-business-button"
+            onClick={generateBusinessOutline}
+            disabled={loading || !outlineGoal.trim()}
+          >
+            {loading ? "Generating..." : "Generate Business Outline"}
+          </button>
+
+          {outlineResult && (
+            <div className="ai-result">
+              <h4>Business Outline</h4>
+              <p>{outlineResult}</p>
             </div>
           )}
         </div>

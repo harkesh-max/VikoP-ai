@@ -10,6 +10,8 @@ export default function AuthPanel({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [resendLoading, setResendLoading] = useState(false);
 
   async function submit(event) {
     event.preventDefault();
@@ -84,6 +86,20 @@ export default function AuthPanel({ onLogin }) {
         }
       }
 
+      if (
+        !response.ok &&
+        mode === "login" &&
+        response.status === 403 &&
+        data?.error === "Please verify your email before signing in."
+      ) {
+        setVerificationEmail(cleanEmail);
+        setPassword("");
+        setMessage(
+          "Please verify your email first. You can resend the verification email below."
+        );
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -92,6 +108,7 @@ export default function AuthPanel({ onLogin }) {
       }
 
       if (mode === "register" && data?.verificationRequired) {
+        setVerificationEmail(cleanEmail);
         setMessage(
           data?.message ||
           "Account created. Please check your email and verify your account before signing in."
@@ -126,6 +143,64 @@ export default function AuthPanel({ onLogin }) {
     }
   }
 
+  async function resendVerificationEmail() {
+    setError("");
+    setMessage("");
+
+    try {
+      setResendLoading(true);
+
+      const response = await fetch(
+        "/api/auth/resend-verification",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify({
+            email: verificationEmail
+          })
+        }
+      );
+
+      const rawText = await response.text();
+
+      let data = {};
+
+      if (rawText.trim()) {
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          throw new Error(
+            `Server returned an invalid response (${response.status}).`
+          );
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          `Unable to resend verification email (${response.status}).`
+        );
+      }
+
+      setMessage(
+        data?.message ||
+        "A new verification email has been sent. Please check your inbox and spam folder."
+      );
+    } catch (err) {
+      console.error("Resend verification error:", err);
+
+      setError(
+        err?.message ||
+        "Unable to resend the verification email. Please try again."
+      );
+    } finally {
+      setResendLoading(false);
+    }
+  }
+
   return (
     <section className="auth-panel">
       <div className="auth-card">
@@ -151,6 +226,7 @@ export default function AuthPanel({ onLogin }) {
               setMode("login");
               setError("");
               setMessage("");
+              setVerificationEmail("");
             }}
             disabled={loading}
           >
@@ -164,6 +240,7 @@ export default function AuthPanel({ onLogin }) {
               setMode("register");
               setError("");
               setMessage("");
+              setVerificationEmail("");
             }}
             disabled={loading}
           >
@@ -240,6 +317,19 @@ export default function AuthPanel({ onLogin }) {
             <div className="auth-note" role="status">
               {message}
             </div>
+          )}
+
+          {verificationEmail && (
+            <button
+              type="button"
+              className="auth-submit"
+              onClick={resendVerificationEmail}
+              disabled={loading || resendLoading}
+            >
+              {resendLoading
+                ? "Sending..."
+                : "Resend Verification Email"}
+            </button>
           )}
 
           {error && (

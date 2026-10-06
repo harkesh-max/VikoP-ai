@@ -332,6 +332,144 @@ export async function register(req, res) {
   }
 }
 
+
+export async function resendVerificationEmail(req, res) {
+  const client = await pool.connect();
+
+  try {
+    const email =
+      typeof req.body?.email === "string"
+        ? req.body.email.trim().toLowerCase()
+        : "";
+
+    if (!email) {
+      return res.status(400).json({
+        error: "Email is required."
+      });
+    }
+
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `SELECT
+        id,
+        name,
+        email,
+        email_verified,
+        verification_token_hash,
+        verification_expires_at
+       FROM users
+       WHERE email = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [email]
+    );
+
+    if (
+      result.rows.length === 0 ||
+      result.rows[0].email_verified
+    ) {
+      await client.query("ROLLBACK");
+
+      return res.json({
+        message:
+          "If the account needs verification, a new verification email will be sent."
+      });
+    }
+
+    const user = result.rows[0];
+
+    const oldTokenHash = user.verification_token_hash;
+    const oldExpiresAt = user.verification_expires_at;
+
+    const verificationToken =
+      crypto.randomBytes(32).toString("hex");
+
+    const verificationTokenHash =
+      hashVerificationToken(verificationToken);
+
+    const verificationExpiresAt = new Date(
+      Date.now() + 24 * 60 * 60 * 1000
+    );
+
+    await client.query(
+      `UPDATE users
+       SET
+         verification_token_hash = $1,
+         verification_expires_at = $2
+       WHERE id = $3
+         AND email_verified = FALSE`,
+      [
+        verificationTokenHash,
+        verificationExpiresAt,
+        user.id
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    try {
+      await sendVerificationEmail({
+        to: user.email,
+        name: user.name,
+        token: verificationToken
+      });
+    } catch (emailError) {
+      console.error(
+        "Resend verification email error:",
+        emailError
+      );
+
+      await pool.query(
+        `UPDATE users
+         SET
+           verification_token_hash = $1,
+           verification_expires_at = $2
+         WHERE id = $3
+           AND email_verified = FALSE
+           AND verification_token_hash = $4`,
+        [
+          oldTokenHash,
+          oldExpiresAt,
+          user.id,
+          verificationTokenHash
+        ]
+      ).catch((restoreError) => {
+        console.error(
+          "Verification token restore error:",
+          restoreError
+        );
+      });
+
+      return res.status(503).json({
+        error:
+          "Verification email could not be sent. Please try again later."
+      });
+    }
+
+    return res.json({
+      message:
+        "A new verification email has been sent. Please check your inbox and spam folder."
+    });
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+
+    console.error(
+      "Resend verification error:",
+      error
+    );
+
+    return res.status(503).json({
+      error:
+        "Verification email could not be sent. Please try again later."
+    });
+  } finally {
+    client.release();
+  }
+}
+
 export async function login(req, res) {
   try {
     const { email, password } = req.body;

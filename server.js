@@ -6,7 +6,8 @@ import {
   register,
   login,
   authenticate,
-  verifyEmail
+  verifyEmail,
+  resendVerificationEmail
 } from "./auth.js";
 import { registerBusinessAIRoutes } from "./business-ai.js";
 import pool from "./db.js";
@@ -292,6 +293,11 @@ const pdfUpload = multer({
 
 app.post("/api/auth/register", authLimiter, register);
 app.post("/api/auth/login", authLimiter, login);
+app.post(
+  "/api/auth/resend-verification",
+  authLimiter,
+  resendVerificationEmail
+);
 app.get("/api/auth/verify-email", verifyEmail);
 
 const { execFile } = await import("child_process");
