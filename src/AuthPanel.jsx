@@ -9,10 +9,12 @@ export default function AuthPanel({ onLogin }) {
   const [industry, setIndustry] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   async function submit(event) {
     event.preventDefault();
     setError("");
+    setMessage("");
 
     const cleanEmail = email.trim().toLowerCase();
 
@@ -89,6 +91,15 @@ export default function AuthPanel({ onLogin }) {
         );
       }
 
+      if (mode === "register" && data?.verificationRequired) {
+        setMessage(
+          data?.message ||
+          "Account created. Please check your email and verify your account before signing in."
+        );
+        setPassword("");
+        return;
+      }
+
       if (!data?.token) {
         throw new Error("Authentication token was not returned.");
       }
@@ -139,6 +150,7 @@ export default function AuthPanel({ onLogin }) {
             onClick={() => {
               setMode("login");
               setError("");
+              setMessage("");
             }}
             disabled={loading}
           >
@@ -151,6 +163,7 @@ export default function AuthPanel({ onLogin }) {
             onClick={() => {
               setMode("register");
               setError("");
+              setMessage("");
             }}
             disabled={loading}
           >
@@ -222,6 +235,12 @@ export default function AuthPanel({ onLogin }) {
               disabled={loading}
             />
           </div>
+
+          {message && (
+            <div className="auth-note" role="status">
+              {message}
+            </div>
+          )}
 
           {error && (
             <div className="auth-error" role="alert">
