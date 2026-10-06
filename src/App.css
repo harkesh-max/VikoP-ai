@@ -1688,3 +1688,12 @@ button {
   white-space: nowrap;
 }
 /* ===== END VIKOP HEADER ALIGNMENT FIX ===== */
+
+/* Mobile-friendly auth inputs */
+.auth-field input {
+  min-height: 50px !important;
+  padding: 12px 14px !important;
+  font-size: 16px !important;
+  box-sizing: border-box !important;
+}
+
