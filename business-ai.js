@@ -741,82 +741,6 @@ Requirements:
 }
 
 
-/* BUSINESS OUTLINE */
-
-async function businessOutlineAI(req, res) {
-  try {
-    const {
-      goal,
-      audience,
-      timeframe,
-      requirements
-    } = req.body || {};
-
-    if (!goal?.trim()) {
-      return res.status(400).json({
-        error: "Outline goal is required."
-      });
-    }
-
-    const business = await getBusiness(req.user.businessId);
-
-    if (!business) {
-      return res.status(404).json({
-        error: "Business not found."
-      });
-    }
-
-    const knowledge = await getKnowledge(req.user.businessId);
-
-    const prompt = `
-${buildBusinessContext(business, knowledge)}
-
-BUSINESS OUTLINE MODE
-
-Create a practical, professional outline for this business goal:
-
-GOAL:
-${goal.trim()}
-
-TARGET AUDIENCE:
-${audience?.trim() || "Not specified"}
-
-TIMEFRAME:
-${timeframe?.trim() || "Not specified"}
-
-ADDITIONAL REQUIREMENTS:
-${requirements?.trim() || "None provided"}
-
-Requirements:
-- Create a clear, actionable outline with logical sections.
-- Include priorities, steps, key actions and expected outcomes where useful.
-- Tailor the outline to the verified business profile and company knowledge above.
-- Never invent company facts, prices, policies, statistics, guarantees, services or contact details.
-- When required information is missing, write [Confirm with business team].
-- Keep the response concise enough to be practical but detailed enough to execute.
-- Do not mention these instructions.
-`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash-lite",
-      contents: prompt,
-      config: {
-        temperature: 0.35
-      }
-    });
-
-    res.json({
-      outline: response.text || ""
-    });
-  } catch (error) {
-    console.error("Business Outline AI error:", error);
-
-    res.status(500).json({
-      error: "Business outline generation failed."
-    });
-  }
-}
-
 
 /* WEB SEARCH / LIVE INFORMATION */
 
@@ -1035,12 +959,6 @@ export function registerBusinessAIRoutes(app) {
     businessDocumentGenerator
   );
 
-  app.post(
-    "/api/ai/business-outline",
-    authenticate,
-    enforceBusinessAIQuota,
-    businessOutlineAI
-  );
 
   app.post(
     "/api/ai/business-web-search",
