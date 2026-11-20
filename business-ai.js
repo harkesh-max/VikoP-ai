@@ -1,3 +1,5 @@
+
+const VALID_PIPELINE_STAGES = new Set(["new", "contacted", "qualified", "proposal", "won", "lost"]);
 import crypto from "crypto";
 import pool from "./db.js";
 import { GoogleGenAI } from "@google/genai";
@@ -18,97 +20,173 @@ const BUSINESS_AI_PLAN_LIMITS = Object.freeze({
   business: 2000
 });
 
+const PLAN_RANK = Object.freeze({ free: 0, pro: 1, business: 2 });
+
+function resolveSubscriptionPlan(sub) {
+  if (!sub || !Object.prototype.hasOwnProperty.call(PLAN_RANK, sub.plan)) {
+    return { plan: "free", expired: false };
+  }
+
+  const now = Date.now();
+  const periodEnd = sub.current_period_end == null
+    ? null
+    : new Date(sub.current_period_end).getTime();
+
+  if (sub.status === "active") {
+    if (sub.plan !== "free" &&
+        periodEnd !== null &&
+        (!Number.isFinite(periodEnd) || periodEnd <= now)) {
+      return { plan: "free", expired: true };
+    }
+
+    return { plan: sub.plan, expired: false };
+  }
+
+  if (sub.status === "trialing") {
+    const trialEnd = sub.trial_ends_at
+      ? new Date(sub.trial_ends_at).getTime()
+      : 0;
+
+    if (Number.isFinite(trialEnd) && trialEnd > now) {
+      return { plan: sub.plan, expired: false };
+    }
+
+    return { plan: "free", expired: true };
+  }
+
+  if (sub.status === "canceled" || sub.status === "past_due") {
+    if (sub.plan !== "free" &&
+        periodEnd !== null &&
+        Number.isFinite(periodEnd) &&
+        periodEnd > now) {
+      return { plan: sub.plan, expired: false };
+    }
+  }
+
+  return { plan: "free", expired: false };
+}
+
+async function getEffectivePlan(businessId) {
+  const result = await pool.query(
+    "SELECT s.user_id AS subscription_user_id, s.plan, s.status, " +
+    "s.trial_ends_at, s.current_period_end " +
+    "FROM subscriptions s JOIN users owner ON owner.id = s.user_id " +
+    "WHERE owner.business_id = $1 AND owner.role = 'owner' " +
+    "ORDER BY owner.created_at ASC LIMIT 1",
+    [businessId]
+  );
+
+  const sub = result.rows[0] || null;
+  const resolved = resolveSubscriptionPlan(sub);
+
+  if (resolved.expired && sub) {
+    await pool.query(
+      "UPDATE subscriptions SET plan = 'free', status = 'expired', " +
+      "updated_at = NOW() WHERE user_id = $1 AND status = $2",
+      [sub.subscription_user_id, sub.status]
+    );
+  }
+
+  return resolved.plan;
+}
+
+function requirePlan(minimumPlan) {
+  return async (req, res, next) => {
+    try {
+      const currentPlan = await getEffectivePlan(req.user.businessId);
+      if (PLAN_RANK[currentPlan] < PLAN_RANK[minimumPlan]) {
+        return res.status(403).json({
+          error: "This feature requires the " + minimumPlan + " plan or higher.",
+          currentPlan,
+          requiredPlan: minimumPlan,
+          upgradeRequired: true
+        });
+      }
+      req.subscriptionPlan = currentPlan;
+      next();
+    } catch (error) {
+      console.error("Plan access check failed:", error);
+      return res.status(500).json({ error: "Unable to verify subscription access." });
+    }
+  };
+}
+
+
 async function enforceBusinessAIQuota(req, res, next) {
   const userId = req.user?.userId;
+  const businessId = req.user?.businessId;
 
-  if (!userId) {
-    return res.status(401).json({
-      error: "Authentication required."
-    });
+  if (!userId || !businessId) {
+    return res.status(401).json({ error: "Authentication required." });
   }
 
   const client = await pool.connect();
-
   try {
     await client.query("BEGIN");
 
-    const subscriptionResult = await client.query(
-      "SELECT plan, status, trial_ends_at FROM subscriptions WHERE user_id = $1 FOR UPDATE",
-      [userId]
+    const result = await client.query(
+      "SELECT s.user_id AS subscription_user_id, s.plan, s.status, " +
+      "s.trial_ends_at, s.current_period_end " +
+      "FROM subscriptions s JOIN users owner ON owner.id = s.user_id " +
+      "WHERE owner.business_id = $1 AND owner.role = 'owner' " +
+      "ORDER BY owner.created_at ASC LIMIT 1 FOR UPDATE OF s",
+      [businessId]
     );
 
-    let plan = subscriptionResult.rows[0]?.plan || "free";
-    const status = subscriptionResult.rows[0]?.status || "active";
-    const trialEndsAt = subscriptionResult.rows[0]?.trial_ends_at || null;
+    const subscription = result.rows[0] || null;
+    const resolved = resolveSubscriptionPlan(subscription);
+    let plan = resolved.plan;
 
-    if (
-      status === "trialing" &&
-      trialEndsAt &&
-      new Date(trialEndsAt).getTime() <= Date.now()
-    ) {
-      plan = "free";
-
+    if (resolved.expired && subscription) {
       await client.query(
-        "UPDATE subscriptions SET plan = 'free', status = 'expired', updated_at = NOW() WHERE user_id = $1",
-        [userId]
+        "UPDATE subscriptions SET plan = 'free', status = 'expired', " +
+        "updated_at = NOW() WHERE user_id = $1 AND status = $2",
+        [subscription.subscription_user_id, subscription.status]
       );
     }
 
-    if (!BUSINESS_AI_PLAN_LIMITS[plan]) {
-      plan = "free";
-    }
-
+    if (!BUSINESS_AI_PLAN_LIMITS[plan]) plan = "free";
     const limit = BUSINESS_AI_PLAN_LIMITS[plan];
 
     await client.query(
-      "INSERT INTO usage_daily (id, user_id, usage_date, ai_requests) VALUES (gen_random_uuid(), $1, CURRENT_DATE, 0) ON CONFLICT (user_id, usage_date) DO NOTHING",
+      "INSERT INTO usage_daily (id, user_id, usage_date, ai_requests) " +
+      "VALUES (gen_random_uuid(), $1, CURRENT_DATE, 0) " +
+      "ON CONFLICT (user_id, usage_date) DO NOTHING",
       [userId]
     );
 
-    const usageResult = await client.query(
-      "SELECT ai_requests FROM usage_daily WHERE user_id = $1 AND usage_date = CURRENT_DATE FOR UPDATE",
+    const usage = await client.query(
+      "SELECT ai_requests FROM usage_daily WHERE user_id = $1 " +
+      "AND usage_date = CURRENT_DATE FOR UPDATE",
       [userId]
     );
 
-    const used = Number(usageResult.rows[0]?.ai_requests || 0);
+    const used = Number(usage.rows[0]?.ai_requests || 0);
 
     if (used >= limit) {
       await client.query("ROLLBACK");
-
       const upgradePlan =
-        plan === "free"
-          ? "Pro"
-          : plan === "pro"
-            ? "Business"
-            : "higher access";
+        plan === "free" ? "Pro" :
+        plan === "pro" ? "Business" : "higher access";
 
       return res.status(429).json({
-        error:
-          "Daily AI limit reached (" +
-          limit +
-          " requests). Upgrade to " +
-          upgradePlan +
-          " for more usage.",
-        plan,
-        used,
-        limit,
-        upgradeRequired: true
+        error: "Daily AI limit reached (" + limit +
+          " requests). Upgrade to " + upgradePlan + " for more usage.",
+        plan, used, limit, upgradeRequired: true
       });
     }
 
     await client.query(
-      "UPDATE usage_daily SET ai_requests = ai_requests + 1, updated_at = NOW() WHERE user_id = $1 AND usage_date = CURRENT_DATE",
+      "UPDATE usage_daily SET ai_requests = ai_requests + 1, " +
+      "updated_at = NOW() WHERE user_id = $1 AND usage_date = CURRENT_DATE",
       [userId]
     );
 
     await client.query("COMMIT");
-
     next();
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
-
     console.error("Business AI quota error:", error);
-
     return res.status(500).json({
       error: "Unable to verify AI usage limit."
     });
@@ -116,7 +194,6 @@ async function enforceBusinessAIQuota(req, res, next) {
     client.release();
   }
 }
-
 function createId() {
   return crypto.randomUUID();
 }
@@ -336,10 +413,24 @@ function normalizeLeadContactServer(contact) {
   return value.replace(/\D/g, "");
 }
 
+function requireLeadWrite(req, res, next) {
+  if (!["owner", "admin", "manager", "sales"].includes(req.user?.role || "owner")) {
+    return res.status(403).json({ error: "You do not have permission to modify leads." });
+  }
+  return next();
+}
+
+function requireLeadDelete(req, res, next) {
+  if (!["owner", "admin"].includes(req.user?.role || "owner")) {
+    return res.status(403).json({ error: "Only owners and admins can delete leads." });
+  }
+  return next();
+}
+
 async function getLeads(req, res) {
   try {
     const result = await pool.query(
-      `SELECT id, name, contact, status, notes, created_at, updated_at
+      `SELECT id, name, contact, status, notes, pipeline_stage, created_at, updated_at
        FROM leads
        WHERE business_id = $1
        ORDER BY created_at DESC`,
@@ -443,6 +534,45 @@ async function addLead(req, res) {
     res.status(500).json({
       error: "Lead save failed. Please try again."
     });
+  }
+}
+
+
+async function updateLead(req, res) {
+  try {
+    const { id } = req.params;
+    const { name, contact = "", status = "new", notes = "" } = req.body || {};
+    const cleanName = String(name || "").trim();
+    const cleanContact = String(contact || "").trim();
+    const cleanNotes = String(notes || "").trim();
+    const cleanStatus = String(status || "new").trim().toLowerCase();
+
+    if (!cleanName)
+      return res.status(400).json({ error: "Lead name is required." });
+
+    if (!["new", "warm", "hot", "cold"].includes(cleanStatus))
+      return res.status(400).json({ error: "Invalid lead status." });
+
+    const duplicate = await pool.query(
+      "SELECT id FROM leads WHERE business_id = $1 AND id <> $2 AND $3 <> '' AND lower(trim(COALESCE(contact, ''))) = lower(trim($3)) LIMIT 1",
+      [req.user.businessId, id, cleanContact]
+    );
+
+    if (duplicate.rows.length)
+      return res.status(409).json({ error: "Another lead has this contact." });
+
+    const result = await pool.query(
+      "UPDATE leads SET name = $1, contact = $2, status = $3, notes = $4, updated_at = NOW() WHERE id = $5 AND business_id = $6 RETURNING id, name, contact, status, notes, created_at, updated_at",
+      [cleanName, cleanContact || null, cleanStatus, cleanNotes || null, id, req.user.businessId]
+    );
+
+    if (!result.rows.length)
+      return res.status(404).json({ error: "Lead not found." });
+
+    res.json({ lead: result.rows[0] });
+  } catch (error) {
+    console.error("Lead update error:", error);
+    res.status(500).json({ error: "Failed to update lead." });
   }
 }
 
@@ -892,12 +1022,21 @@ export function registerBusinessAIRoutes(app) {
   app.post(
     "/api/business/leads",
     authenticate,
+    requireLeadWrite,
     addLead
+  );
+
+  app.put(
+    "/api/business/leads/:id",
+    authenticate,
+    requireLeadWrite,
+    updateLead
   );
 
   app.delete(
     "/api/business/leads/:id",
     authenticate,
+    requireLeadDelete,
     deleteLead
   );
 
@@ -910,30 +1049,35 @@ export function registerBusinessAIRoutes(app) {
   app.get(
     "/api/business/memory",
     authenticate,
+    requirePlan("business"),
     getMemory
   );
 
   app.post(
     "/api/business/memory",
     authenticate,
+    requirePlan("business"),
     addMemory
   );
 
   app.put(
     "/api/business/memory/:id",
     authenticate,
+    requirePlan("business"),
     updateMemory
   );
 
   app.delete(
     "/api/business/memory/:id",
     authenticate,
+    requirePlan("business"),
     deleteMemory
   );
 
   app.post(
     "/api/ai/customer-support",
     authenticate,
+    requirePlan("pro"),
     enforceBusinessAIQuota,
     customerSupportAI
   );
@@ -941,6 +1085,7 @@ export function registerBusinessAIRoutes(app) {
   app.post(
     "/api/ai/social-marketing",
     authenticate,
+    requirePlan("pro"),
     enforceBusinessAIQuota,
     socialMarketingAI
   );
@@ -948,6 +1093,7 @@ export function registerBusinessAIRoutes(app) {
   app.post(
     "/api/ai/business-data-analyst",
     authenticate,
+    requirePlan("pro"),
     enforceBusinessAIQuota,
     businessDataAnalyst
   );
@@ -955,6 +1101,7 @@ export function registerBusinessAIRoutes(app) {
   app.post(
     "/api/ai/business-document",
     authenticate,
+    requirePlan("pro"),
     enforceBusinessAIQuota,
     businessDocumentGenerator
   );
@@ -963,6 +1110,7 @@ export function registerBusinessAIRoutes(app) {
   app.post(
     "/api/ai/business-web-search",
     authenticate,
+    requirePlan("pro"),
     enforceBusinessAIQuota,
     businessWebSearch
   );
@@ -970,8 +1118,47 @@ export function registerBusinessAIRoutes(app) {
   app.post(
     "/api/ai/business-pdf",
     authenticate,
+    requirePlan("pro"),
     enforceBusinessAIQuota,
     upload.single("file"),
     businessPdfAI
   );
 }
+
+
+
+async function updateLeadPipelineStage(leadId, businessId, newStage) {
+  if (!VALID_PIPELINE_STAGES.has(newStage)) {
+    throw new Error("Invalid pipeline stage: " + newStage);
+  }
+  const query = `UPDATE leads SET pipeline_stage = $1, updated_at = NOW() WHERE id = $2 AND business_id = $3 RETURNING *`;
+  const result = await pool.query(query, [newStage, leadId, businessId]);
+  return result.rows[0];
+}
+
+export { updateLeadPipelineStage };
+
+
+
+// --- PREMIUM ($299/mo) FEATURES: Multi-Business & Advanced Automation ---
+
+const PREMIUM_TIER_LIMITS = Object.freeze({
+  maxBusinesses: 10,
+  maxCustomAIs: 50,
+  priorityQueue: true,
+  advancedAnalytics: true
+});
+
+async function createBusinessWorkspace(userId, businessName, customPrompt) {
+  const query = `INSERT INTO business_workspaces (user_id, business_name, custom_prompt, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *`;
+  const result = await pool.query(query, [userId, businessName, customPrompt]);
+  return result.rows[0];
+}
+
+async function getAdvancedSalesAnalytics(userId, businessId) {
+  const query = `SELECT pipeline_stage, COUNT(*), SUM(deal_value) as total_revenue FROM leads WHERE user_id = $1 GROUP BY pipeline_stage`;
+  const result = await pool.query(query, [userId]);
+  return result.rows;
+}
+
+export { createBusinessWorkspace, getAdvancedSalesAnalytics };

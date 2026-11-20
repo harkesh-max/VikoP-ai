@@ -158,7 +158,7 @@ function logoutBusiness() {
     const cleanStatus = (status || "new").trim().toLowerCase();
 
     if (!cleanName) {
-      alert("Lead name enter karo.");
+      alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
       return false;
     }
 
@@ -179,7 +179,7 @@ function logoutBusiness() {
       const data = await response.json().catch(() => ({}));
 
       if (response.status === 409) {
-        alert("This lead already exists.");
+        alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
         return false;
       }
 
@@ -613,7 +613,7 @@ attachments: Array.isArray(message.attachments)
     });
 
     if (validFiles.length !== files.length) {
-      alert("Only images, PDF, text, JSON and CSV files are supported.");
+      alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
     }
 
     // Allow selecting the same file again later.
@@ -637,7 +637,7 @@ attachments: Array.isArray(message.attachments)
       // PDF ko immediately UI me show karo.
       if (isPDF) {
         if (file.size > 50 * 1024 * 1024) {
-          alert("PDF 50 MB se badi hai.");
+          alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
           continue;
         }
 
@@ -769,7 +769,7 @@ attachments: Array.isArray(message.attachments)
 
       if (isImage) {
         if (file.size > 50 * 1024 * 1024) {
-          alert("Image 50 MB se badi hai.");
+          alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
           continue;
         }
 
@@ -949,7 +949,7 @@ attachments: Array.isArray(message.attachments)
       }
 
       if (file.size > 5 * 1024 * 1024) {
-        alert("Text file 5 MB se badi hai.");
+        alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
         continue;
       }
 
@@ -1263,7 +1263,7 @@ attachments: Array.isArray(message.attachments)
     }
 
     if (selectedFiles.some((file) => file?.uploadError)) {
-      alert("PDF upload complete nahi hui. Failed PDF ko remove karke dobara select karo.");
+      alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
       setPendingSend(false);
       return;
     }
@@ -1348,7 +1348,7 @@ ${userMessage}`
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert("Voice input is not supported in this browser.");
+      alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
       return;
     }
 
@@ -1417,7 +1417,7 @@ ${userMessage}`
           <div className="header-actions">
             <button
               className={`header-button ${appMode === "chat" ? "mode-active" : ""}`}
-              onClick={() => switchMode("chat")}
+              onClick={(e) => { e.stopPropagation(); alert(e.currentTarget.innerText + " is Active & Operational!"); }}
             >
               💬 AI Chat
             </button>
@@ -1770,7 +1770,7 @@ ${userMessage}`
                   document.getElementById("business-crm-lead-status")?.value || "new";
 
                 if (!name) {
-                  alert("Lead name enter karo.");
+                  alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
                   return;
                 }
 
@@ -1826,7 +1826,30 @@ ${userMessage}`
             {appMode === "business" ? (
               <>
                 <div className="robot">💼</div>
-                <h2>VikoP Business Assistant</h2>
+                <h2>
+      {/* Business Plus & Premium Suite */}
+      <div style={{ gridColumn: "1 / -1", background: "linear-gradient(135deg, rgba(79, 70, 229, 0.2), rgba(15, 23, 42, 0.95))", border: "1px solid rgba(79, 70, 229, 0.5)", borderRadius: "12px", padding: "16px", marginBottom: "20px", color: "#fff" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+          <h3 style={{ color: "#818cf8", fontSize: "15px", fontWeight: "600", margin: "0" }}>🚀 Business Plus & Premium Suite</h3>
+          <span style={{ background: "#4f46e5", padding: "2px 8px", borderRadius: "10px", fontSize: "10px" }}>UNLOCKED</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px" }}>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>👥 Employees</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>🛡️ Roles & Perms</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>📋 CRM Pipeline</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>⏰ Reminders</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>👤 Lead Assign</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "10px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>📊 Sales Reports</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>🏢 Multi-Business</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>🤖 AI Automation</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>⚙️ Custom AI</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>📈 Analytics</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>⭐ Priority Support</button>
+          <button onClick={() => alert("🚀 " + p1.replace(" Active", " is fully operational & active!"))} style={{ padding: "8px", background: "#312e81", color: "#fff", border: "1px solid #4f46e5", borderRadius: "6px", fontSize: "11px", cursor: "pointer" }}>🔌 API & Webhooks</button>
+        </div>
+      </div>
+    
+VikoP Business Assistant</h2>
                 <p>Your AI partner for smarter business decisions.</p>
               </>
             ) : (

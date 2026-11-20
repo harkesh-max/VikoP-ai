@@ -1,3 +1,4 @@
+import { updateLeadPipelineStage } from "./business-ai.js";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -10,6 +11,7 @@ import {
   resendVerificationEmail
 } from "./auth.js";
 import { registerBusinessAIRoutes } from "./business-ai.js";
+import { registerTeamRoutes } from "./team-management.js";
 import pool from "./db.js";
 import multer from "multer";
 import { rateLimit } from "express-rate-limit";
@@ -318,6 +320,7 @@ async function runCurl(args, options = {}) {
 app.post(
   "/api/upload-pdf-stream",
   uploadLimiter,
+  authenticate,
   express.raw({ type: "application/pdf", limit: "50mb" }),
   async (req, res) => {
     try {
@@ -416,6 +419,7 @@ app.post(
 app.post(
   "/api/upload-pdf",
   uploadLimiter,
+  authenticate,
   pdfUpload.single("file"),
   async (req, res) => {
     let tempPath = null;
@@ -508,6 +512,7 @@ app.use("/api/ai", chatLimiter);
 
 // Permanent VikoP Business AI routes
 registerBusinessAIRoutes(app);
+registerTeamRoutes(app);
 
 
 const PLAN_LIMITS = Object.freeze({
@@ -516,151 +521,118 @@ const PLAN_LIMITS = Object.freeze({
   business: 2000
 });
 
-async function reserveAIRequest(userId) {
-  const client = await pool.connect();
+function resolveMainAIPlan(sub) {
+  if (!sub || !Object.prototype.hasOwnProperty.call(PLAN_LIMITS, sub.plan)) {
+    return { plan: "free", expired: false };
+  }
 
+  const now = Date.now();
+  const periodEnd = sub.current_period_end == null
+    ? null
+    : new Date(sub.current_period_end).getTime();
+
+  if (sub.status === "active") {
+    if (sub.plan !== "free" &&
+        periodEnd !== null &&
+        (!Number.isFinite(periodEnd) || periodEnd <= now)) {
+      return { plan: "free", expired: true };
+    }
+
+    return { plan: sub.plan, expired: false };
+  }
+
+  if (sub.status === "trialing") {
+    const trialEnd = sub.trial_ends_at
+      ? new Date(sub.trial_ends_at).getTime()
+      : 0;
+
+    if (Number.isFinite(trialEnd) && trialEnd > now) {
+      return { plan: sub.plan, expired: false };
+    }
+
+    return { plan: "free", expired: true };
+  }
+
+  if (sub.status === "canceled" || sub.status === "past_due") {
+    if (sub.plan !== "free" &&
+        periodEnd !== null &&
+        Number.isFinite(periodEnd) &&
+        periodEnd > now) {
+      return { plan: sub.plan, expired: false };
+    }
+  }
+
+  return { plan: "free", expired: false };
+}
+
+
+async function reserveAIRequest(userId, businessId, role) {
+  const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    let subscriptionResult = await client.query(
-      `
-      SELECT
-        plan,
-        status,
-        trial_ends_at,
-        current_period_end
-      FROM subscriptions
-      WHERE user_id = $1
-      FOR UPDATE
-      `,
-      [userId]
-    );
+    const ownerQuery =
+      "SELECT s.user_id AS subscription_user_id, s.plan, s.status, " +
+      "s.trial_ends_at, s.current_period_end " +
+      "FROM subscriptions s JOIN users owner ON owner.id = s.user_id " +
+      "WHERE owner.business_id = $1 AND owner.role = 'owner' " +
+      "ORDER BY owner.created_at ASC LIMIT 1 FOR UPDATE OF s";
 
-    if (subscriptionResult.rows.length === 0) {
+    let result = await client.query(ownerQuery, [businessId]);
+
+    if (result.rows.length === 0 && role === "owner") {
       await client.query(
-        `
-        INSERT INTO subscriptions (
-          id,
-          user_id,
-          plan,
-          status
-        )
-        VALUES (gen_random_uuid(), $1, 'free', 'active')
-        ON CONFLICT (user_id) DO NOTHING
-        `,
+        "INSERT INTO subscriptions (id, user_id, plan, status) " +
+        "VALUES (gen_random_uuid(), $1, 'free', 'active') " +
+        "ON CONFLICT (user_id) DO NOTHING",
         [userId]
       );
-
-      subscriptionResult = await client.query(
-        `
-        SELECT
-          plan,
-          status,
-          trial_ends_at,
-          current_period_end
-        FROM subscriptions
-        WHERE user_id = $1
-        FOR UPDATE
-        `,
-        [userId]
-      );
+      result = await client.query(ownerQuery, [businessId]);
     }
 
-    const subscription = subscriptionResult.rows[0];
+    const subscription = result.rows[0] || null;
+    const resolved = resolveMainAIPlan(subscription);
+    let plan = resolved.plan;
 
-    let plan = subscription?.plan || "free";
-    let status = subscription?.status || "active";
-
-    if (
-      status === "trialing" &&
-      subscription?.trial_ends_at &&
-      new Date(subscription.trial_ends_at).getTime() <= Date.now()
-    ) {
-      plan = "free";
-      status = "expired";
-
+    if (resolved.expired && subscription) {
       await client.query(
-        `
-        UPDATE subscriptions
-        SET
-          plan = 'free',
-          status = 'expired',
-          updated_at = NOW()
-        WHERE user_id = $1
-        `,
-        [userId]
+        "UPDATE subscriptions SET plan = 'free', status = 'expired', " +
+        "updated_at = NOW() WHERE user_id = $1 AND status = $2",
+        [subscription.subscription_user_id, subscription.status]
       );
     }
 
-    if (!PLAN_LIMITS[plan]) {
-      plan = "free";
-    }
-
+    if (!PLAN_LIMITS[plan]) plan = "free";
     const limit = PLAN_LIMITS[plan];
 
     await client.query(
-      `
-      INSERT INTO usage_daily (
-        id,
-        user_id,
-        usage_date,
-        ai_requests
-      )
-      VALUES (
-        gen_random_uuid(),
-        $1,
-        CURRENT_DATE,
-        0
-      )
-      ON CONFLICT (user_id, usage_date) DO NOTHING
-      `,
+      "INSERT INTO usage_daily (id, user_id, usage_date, ai_requests) " +
+      "VALUES (gen_random_uuid(), $1, CURRENT_DATE, 0) " +
+      "ON CONFLICT (user_id, usage_date) DO NOTHING",
       [userId]
     );
 
-    const usageResult = await client.query(
-      `
-      SELECT ai_requests
-      FROM usage_daily
-      WHERE user_id = $1
-        AND usage_date = CURRENT_DATE
-      FOR UPDATE
-      `,
+    const usage = await client.query(
+      "SELECT ai_requests FROM usage_daily WHERE user_id = $1 " +
+      "AND usage_date = CURRENT_DATE FOR UPDATE",
       [userId]
     );
 
-    const used = Number(usageResult.rows[0]?.ai_requests || 0);
+    const used = Number(usage.rows[0]?.ai_requests || 0);
 
     if (used >= limit) {
       await client.query("ROLLBACK");
-
-      return {
-        allowed: false,
-        plan,
-        used,
-        limit
-      };
+      return { allowed: false, plan, used, limit };
     }
 
     await client.query(
-      `
-      UPDATE usage_daily
-      SET
-        ai_requests = ai_requests + 1,
-        updated_at = NOW()
-      WHERE user_id = $1
-        AND usage_date = CURRENT_DATE
-      `,
+      "UPDATE usage_daily SET ai_requests = ai_requests + 1, " +
+      "updated_at = NOW() WHERE user_id = $1 AND usage_date = CURRENT_DATE",
       [userId]
     );
 
     await client.query("COMMIT");
-
-    return {
-      allowed: true,
-      plan,
-      used: used + 1,
-      limit
-    };
+    return { allowed: true, plan, used: used + 1, limit };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -668,7 +640,6 @@ async function reserveAIRequest(userId) {
     client.release();
   }
 }
-
 async function releaseAIRequest(userId) {
   try {
     await pool.query(
@@ -716,7 +687,7 @@ app.post("/chat", chatLimiter, authenticate, async (req, res) => {
   }
 
   try {
-    const usage = await reserveAIRequest(req.user.userId);
+    const usage = await reserveAIRequest(req.user.userId, req.user.businessId, req.user.role);
 
     if (!usage.allowed) {
       const upgradePlan =
@@ -1339,6 +1310,15 @@ async function initializeDatabase() {
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ;
 
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'owner';
+
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+
     CREATE TABLE IF NOT EXISTS leads (
       id UUID PRIMARY KEY,
       business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
@@ -1350,6 +1330,9 @@ async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE leads
+      ADD COLUMN IF NOT EXISTS pipeline_stage TEXT NOT NULL DEFAULT 'new';
 
     CREATE INDEX IF NOT EXISTS idx_leads_business
       ON leads(business_id);
@@ -1411,13 +1394,116 @@ const PORT = process.env.PORT || 3001;
 initializeDatabase()
   .then(() => {
     console.log("Database initialization completed.");
-  })
-  .catch((error) => {
-    console.error("Database initialization failed:", error);
-    console.warn("Starting AI server without database initialization.");
-  })
-  .finally(() => {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`AI server running on port ${PORT}`);
     });
+  })
+  .catch(async (error) => {
+    console.error("Database initialization failed. Server will not start:", error);
+    process.exitCode = 1;
+    await pool.end().catch(() => {});
   });
+
+
+
+// CRM Pipeline Stage Update Endpoint
+function requirePipelineWrite(req, res, next) {
+  if (!["owner", "admin", "manager", "sales"].includes(req.user?.role || "owner")) {
+    return res.status(403).json({ error: "You do not have permission to change pipeline stages." });
+  }
+  return next();
+}
+
+app.patch("/api/leads/:id/stage", authenticate, requirePipelineWrite, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stage } = req.body;
+    const businessId = req.user.businessId;
+
+    if (!stage) {
+      return res.status(400).json({ error: "Stage is required" });
+    }
+
+    const updatedLead = await updateLeadPipelineStage(id, businessId, stage);
+    if (!updatedLead) {
+      return res.status(404).json({ error: "Lead not found" });
+    }
+
+    res.json({ success: true, lead: updatedLead });
+  } catch (error) {
+    console.error("Error updating lead stage:", error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Authenticated, business-scoped sales reporting.
+app.get("/api/sales-reports", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         COUNT(*)::int AS total_leads,
+         COUNT(*) FILTER (WHERE pipeline_stage = 'won')::int AS closed_deals
+       FROM leads
+       WHERE business_id = $1`,
+      [req.user.businessId]
+    );
+
+    const total = result.rows[0]?.total_leads || 0;
+    const won = result.rows[0]?.closed_deals || 0;
+
+    return res.json({
+      success: true,
+      report: {
+        total_leads: total,
+        closed_deals: won,
+        conversion_rate: total ? ((won / total) * 100).toFixed(1) + "%" : "0%"
+      }
+    });
+  } catch (error) {
+    console.error("Sales report error:", error);
+    return res.status(500).json({ error: "Could not load sales report." });
+  }
+});
+
+// Read the same subscription and daily usage records used by AI quota enforcement.
+app.get("/api/ai-quota", authenticate, async (req, res) => {
+  try {
+    const [subscriptionResult, usageResult] = await Promise.all([
+      pool.query(
+        "SELECT s.plan, s.status, s.trial_ends_at, s.current_period_end " +
+        "FROM subscriptions s JOIN users owner ON owner.id = s.user_id " +
+        "WHERE owner.business_id = $1 AND owner.role = 'owner' " +
+        "ORDER BY owner.created_at ASC LIMIT 1",
+        [req.user.businessId]
+      ),
+      pool.query(
+        `SELECT ai_requests
+         FROM usage_daily
+         WHERE user_id = $1 AND usage_date = CURRENT_DATE
+         LIMIT 1`,
+        [req.user.userId]
+      )
+    ]);
+
+    const subscription = subscriptionResult.rows[0] || null;
+    const resolved = resolveMainAIPlan(subscription);
+    const plan = PLAN_LIMITS[resolved.plan] ? resolved.plan : "free";
+    const limit = PLAN_LIMITS[plan];
+    const used = Number(usageResult.rows[0]?.ai_requests || 0);
+
+    return res.json({
+      success: true,
+      plan,
+      daily_limit: limit,
+      requests_used: used,
+      requests_remaining: Math.max(0, limit - used)
+    });
+  } catch (error) {
+    console.error("AI quota lookup error:", error);
+    return res.status(500).json({ error: "Could not load AI quota." });
+  }
+});
+
+// Legacy roles, reminders and automation endpoints intentionally removed.
+// Use /api/team/members for team access. Other features need proper
+// authenticated, business-scoped database implementations before exposure.
