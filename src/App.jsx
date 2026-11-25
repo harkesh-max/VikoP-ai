@@ -5,6 +5,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import "./App.css";
 import BusinessDashboard from "./BusinessDashboard.jsx";
+import Reminders from "./Reminders.jsx";
 import AuthPanel from "./AuthPanel.jsx";
 
 const CURRENT_CHAT_KEY = "vikop-current-chat";
@@ -64,7 +65,94 @@ const [authUser, setAuthUser] = useState(() => {
   }
 });
 
-const [showBusinessDashboard, setShowBusinessDashboard] = useState(false);
+const [businessWorkspaceTab, setBusinessWorkspaceTab] = useState("");
+
+// Reminder due-time monitor: runs across authenticated workspace pages.
+useEffect(() => {
+  if (!authToken) return;
+
+  const accountKey = String(
+    authUser?.id || authUser?.userId || authUser?.email || "account"
+  ).trim().toLowerCase();
+
+  const storageKey = `vikop-reminder-alerts:${accountKey}`;
+  let stopped = false;
+
+  async function checkDueReminders() {
+    try {
+      const response = await fetch("/api/reminders", {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+
+      if (!response.ok) return;
+
+      const data = await response.json();
+      const now = Date.now();
+      const reminders = (data.reminders || []).filter(item =>
+        item.status === "pending" &&
+        item.due_at &&
+        new Date(item.due_at).getTime() <= now
+      );
+
+      let alerted = {};
+      try {
+        alerted = JSON.parse(localStorage.getItem(storageKey) || "{}");
+      } catch {
+        alerted = {};
+      }
+
+      const fresh = reminders.filter(item => {
+        const key = `${item.id}:${item.due_at}`;
+        return !alerted[key];
+      });
+
+      if (!fresh.length || stopped) return;
+
+      for (const item of fresh) {
+        alerted[`${item.id}:${item.due_at}`] = now;
+      }
+
+      // Save before displaying to prevent duplicate alerts.
+      try {
+        const entries = Object.entries(alerted)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 300);
+        localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(entries)));
+      } catch (error) {
+        console.warn("Reminder alert storage unavailable:", error);
+      }
+
+      if ("Notification" in window && Notification.permission === "granted") {
+        for (const item of fresh) {
+          try {
+            new Notification("VikoP AI — Reminder due", {
+              body: item.title,
+              tag: `vikop-reminder-${item.id}`
+            });
+          } catch (error) {
+            console.warn("Reminder notification failed:", error);
+          }
+        }
+      } else if (document.visibilityState === "visible") {
+        window.alert(
+          "🔔 VikoP AI — Reminder due:\n" +
+          fresh.map(item => `• ${item.title}`).join("\n")
+        );
+      }
+    } catch (error) {
+      console.warn("Reminder due check failed:", error);
+    }
+  }
+
+  checkDueReminders();
+  const timer = window.setInterval(checkDueReminders, 30000);
+
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+  };
+}, [authToken, authUser]);
+
 
 function handleLogin(token, user = null) {
   setAuthToken(token);
@@ -83,13 +171,22 @@ function handleLogin(token, user = null) {
   }
 }
 
+function handleBusinessSwitch(token, user) {
+  handleLogin(token, user);
+  try {
+    localStorage.setItem("vikop-auth-token", token);
+  } catch (error) {
+    console.error("Failed to save business session:", error);
+  }
+}
+
 function logoutBusiness() {
   localStorage.removeItem("vikop-auth-token");
   localStorage.removeItem("vikop-auth-user");
 
   setAuthToken("");
   setAuthUser(null);
-  setShowBusinessDashboard(false);
+  setBusinessWorkspaceTab("");
 }
 
 
@@ -104,13 +201,19 @@ function logoutBusiness() {
   const [appMode, setAppMode] = useState("chat");
   const [showHistory, setShowHistory] = useState(false);
   const [showBusinessCRM, setShowBusinessCRM] = useState(false);
-  const [showPricing, setShowPricing] = useState(false);
 
   const [businessKnowledge, setBusinessKnowledge] = useState("");
   const [industryMode, setIndustryMode] = useState("general");
 
   const [businessLeads, setBusinessLeads] = useState([]);
   const [businessLeadsLoading, setBusinessLeadsLoading] = useState(false);
+  const [leadSearch, setLeadSearch] = useState("");
+  const [leadFilter, setLeadFilter] = useState("all");
+  const [leadCanAssign, setLeadCanAssign] = useState(false);
+  const [leadTeamMembers, setLeadTeamMembers] = useState([]);
+  const [leadEditingId, setLeadEditingId] = useState(null);
+  const [leadEditForm, setLeadEditForm] = useState({ name: "", contact: "", status: "new" });
+  const [leadSaving, setLeadSaving] = useState(false);
 
   const [chatHistory, setChatHistory] = useState([]);
   const [businessHistory, setBusinessHistory] = useState([]);
@@ -144,6 +247,28 @@ function logoutBusiness() {
       }
 
       setBusinessLeads(Array.isArray(data.leads) ? data.leads : []);
+
+      const canAssign = data.canAssign === true;
+      setLeadCanAssign(canAssign);
+
+      if (canAssign) {
+        try {
+          const teamResponse = await fetch("/api/reminders/team", {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          const teamData = await teamResponse.json().catch(() => ({}));
+          if (!teamResponse.ok) throw new Error(teamData.error || "Could not load employees.");
+          setLeadTeamMembers(
+            (Array.isArray(teamData.members) ? teamData.members : [])
+              .filter((member) => member.role !== "owner")
+          );
+        } catch (teamError) {
+          console.error("Lead team load failed:", teamError);
+          setLeadTeamMembers([]);
+        }
+      } else {
+        setLeadTeamMembers([]);
+      }
     } catch (error) {
       console.error("Lead load failed:", error);
       setBusinessLeads([]);
@@ -158,7 +283,7 @@ function logoutBusiness() {
     const cleanStatus = (status || "new").trim().toLowerCase();
 
     if (!cleanName) {
-      alert("Lead name enter karo.");
+      alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
       return false;
     }
 
@@ -179,7 +304,7 @@ function logoutBusiness() {
       const data = await response.json().catch(() => ({}));
 
       if (response.status === 409) {
-        alert("This lead already exists.");
+        alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
         return false;
       }
 
@@ -196,6 +321,65 @@ function logoutBusiness() {
       console.error("Lead add failed:", error);
       alert(error.message || "Failed to save lead.");
       return false;
+    }
+  }
+
+  async function updateBusinessLead(id, values) {
+    setLeadSaving(true);
+    try {
+      const response = await fetch(`/api/business/leads/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          name: values.name,
+          contact: values.contact,
+          status: values.status,
+          notes: values.notes || ""
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Failed to update lead.");
+      if (data.lead) {
+        setBusinessLeads((prev) => prev.map((lead) =>
+          lead.id === id ? { ...lead, ...data.lead } : lead
+        ));
+      }
+      setLeadEditingId(null);
+      return true;
+    } catch (error) {
+      alert(error.message || "Failed to update lead.");
+      return false;
+    } finally {
+      setLeadSaving(false);
+    }
+  }
+
+  async function assignBusinessLead(id, assignedTo) {
+    try {
+      const response = await fetch(
+        `/api/business/leads/${encodeURIComponent(id)}/assignment`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ assignedTo: assignedTo || null })
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Failed to assign lead.");
+      if (data.lead) {
+        setBusinessLeads((prev) => prev.map((lead) =>
+          lead.id === id ? { ...lead, ...data.lead } : lead
+        ));
+      }
+    } catch (error) {
+      alert(error.message || "Failed to assign lead.");
+      await loadBusinessLeads();
     }
   }
 
@@ -613,7 +797,7 @@ attachments: Array.isArray(message.attachments)
     });
 
     if (validFiles.length !== files.length) {
-      alert("Only images, PDF, text, JSON and CSV files are supported.");
+      alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
     }
 
     // Allow selecting the same file again later.
@@ -637,7 +821,7 @@ attachments: Array.isArray(message.attachments)
       // PDF ko immediately UI me show karo.
       if (isPDF) {
         if (file.size > 50 * 1024 * 1024) {
-          alert("PDF 50 MB se badi hai.");
+          alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
           continue;
         }
 
@@ -769,7 +953,7 @@ attachments: Array.isArray(message.attachments)
 
       if (isImage) {
         if (file.size > 50 * 1024 * 1024) {
-          alert("Image 50 MB se badi hai.");
+          alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
           continue;
         }
 
@@ -949,7 +1133,7 @@ attachments: Array.isArray(message.attachments)
       }
 
       if (file.size > 5 * 1024 * 1024) {
-        alert("Text file 5 MB se badi hai.");
+        alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
         continue;
       }
 
@@ -1263,7 +1447,7 @@ attachments: Array.isArray(message.attachments)
     }
 
     if (selectedFiles.some((file) => file?.uploadError)) {
-      alert("PDF upload complete nahi hui. Failed PDF ko remove karke dobara select karo.");
+      alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
       setPendingSend(false);
       return;
     }
@@ -1348,7 +1532,7 @@ ${userMessage}`
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert("Voice input is not supported in this browser.");
+      alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
       return;
     }
 
@@ -1393,11 +1577,24 @@ ${userMessage}`
     return <AuthPanel onLogin={handleLogin} />;
   }
 
-  if (showBusinessDashboard) {
+  if (businessWorkspaceTab === "reminders") {
+    return (
+      <Reminders
+        token={authToken}
+        onClose={() => setBusinessWorkspaceTab("")}
+      />
+    );
+  }
+
+  if (businessWorkspaceTab) {
     return (
       <BusinessDashboard
+        key={businessWorkspaceTab}
         token={authToken}
-        onClose={() => setShowBusinessDashboard(false)}
+        onBusinessSwitch={handleBusinessSwitch}
+        initialTab={businessWorkspaceTab}
+        hideNavigation={true}
+        onClose={() => setBusinessWorkspaceTab("")}
       />
     );
   }
@@ -1430,6 +1627,62 @@ ${userMessage}`
             </button>
 
             <button
+              className={`header-button ${businessWorkspaceTab === "reminders" ? "mode-active" : ""}`}
+              onClick={() => setBusinessWorkspaceTab("reminders")}
+            >
+              🔔 Reminders
+            </button>
+
+            <button
+              className={`header-button ${businessWorkspaceTab === "employees" ? "mode-active" : ""}`}
+              onClick={() => setBusinessWorkspaceTab("employees")}
+            >
+              👥 Employees
+            </button>
+
+            <button
+              className={`header-button ${businessWorkspaceTab === "sales-reports" ? "mode-active" : ""}`}
+              onClick={() => setBusinessWorkspaceTab("sales-reports")}
+            >
+              📈 Sales Reports
+            </button>
+
+            <button
+              className={`header-button ${businessWorkspaceTab === "multi-business" ? "mode-active" : ""}`}
+              onClick={() => setBusinessWorkspaceTab("multi-business")}
+            >
+              🏢 Multi-Business
+            </button>
+
+            <button
+              className={`header-button ${businessWorkspaceTab === "automations" ? "mode-active" : ""}`}
+              onClick={() => setBusinessWorkspaceTab("automations")}
+            >
+              ⚡ AI Automation
+            </button>
+
+            <button
+              className={`header-button ${businessWorkspaceTab === "custom-ai" ? "mode-active" : ""}`}
+              onClick={() => setBusinessWorkspaceTab("custom-ai")}
+            >
+              🧠 Custom AI
+            </button>
+
+            <button
+              className={`header-button ${businessWorkspaceTab === "api-webhooks" ? "mode-active" : ""}`}
+              onClick={() => setBusinessWorkspaceTab("api-webhooks")}
+            >
+              🔌 API & Webhooks
+            </button>
+
+            <button
+              className={`header-button ${businessWorkspaceTab === "permissions" ? "mode-active" : ""}`}
+              onClick={() => setBusinessWorkspaceTab("permissions")}
+            >
+              🔐 Roles & Permissions
+            </button>
+
+            <button
               className="header-button"
               onClick={() => setShowHistory((prev) => !prev)}
             >
@@ -1440,12 +1693,7 @@ ${userMessage}`
               🆕 New Chat
             </button>
 
-            <button
-              className="header-button pricing-button"
-              onClick={() => setShowPricing(true)}
-            >
-              ⭐ Upgrade
-            </button>
+
 
 <div className="profile-area">
   <div className="profile-chip">
@@ -1478,138 +1726,6 @@ ${userMessage}`
           </div>
         </div>
       </header>
-
-      {showPricing && (
-        <div
-          className="pricing-overlay"
-          onClick={() => setShowPricing(false)}
-        >
-          <div
-            className="pricing-modal"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="pricing-modal-header">
-              <div>
-                <span className="pricing-eyebrow">VikoP AI</span>
-                <h2>Choose your plan</h2>
-                <p>
-                  Start free, then upgrade when your business needs more.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className="pricing-close"
-                onClick={() => setShowPricing(false)}
-                aria-label="Close pricing"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="pricing-grid">
-              <section className="pricing-card">
-                <span className="pricing-badge">FREE</span>
-                <h3>Free</h3>
-                <div className="pricing-price">
-                  $0<span>/month</span>
-                </div>
-                <p className="pricing-description">
-                  Explore VikoP AI before upgrading.
-                </p>
-
-                <ul>
-                  <li>15 AI requests per day</li>
-                  <li>AI Chat</li>
-                  <li>CRM & Leads</li>
-                  <li>Business workspace</li>
-                  <li>PDF AI access within your daily limit</li>
-                </ul>
-
-                <button
-                  type="button"
-                  className="pricing-plan-button pricing-secondary"
-                  onClick={() => setShowPricing(false)}
-                >
-                  Current plan
-                </button>
-              </section>
-
-              <section className="pricing-card pricing-featured">
-                <div className="pricing-popular">MOST POPULAR</div>
-                <span className="pricing-badge">PRO</span>
-                <h3>Pro</h3>
-                <div className="pricing-price">
-                  $19<span>/month</span>
-                </div>
-                <p className="pricing-description">
-                  For freelancers and growing businesses.
-                </p>
-
-                <ul>
-                  <li>500 AI requests per day</li>
-                  <li>Advanced Business AI tools</li>
-                  <li>Customer Support AI</li>
-                  <li>Social Media Marketing AI</li>
-                  <li>Business Data Analyst</li>
-                  <li>Business Document Generator</li>
-                  <li>Web Search & PDF AI</li>
-                </ul>
-
-                <button
-                  type="button"
-                  className="pricing-plan-button pricing-primary"
-                  onClick={() =>
-                    alert(
-                      "Pro checkout will be connected next. Your 7-day Pro trial is already enabled for new accounts."
-                    )
-                  }
-                >
-                  Start Pro
-                </button>
-              </section>
-
-              <section className="pricing-card">
-                <span className="pricing-badge">BUSINESS</span>
-                <h3>Business</h3>
-                <div className="pricing-price">
-                  $49<span>/month</span>
-                </div>
-                <p className="pricing-description">
-                  For teams and businesses with heavier AI usage.
-                </p>
-
-                <ul>
-                  <li>2,000 AI requests per day</li>
-                  <li>All Pro AI tools</li>
-                  <li>Business Knowledge / Memory</li>
-                  <li>CRM & Lead workspace</li>
-                  <li>Higher usage capacity</li>
-                  <li>Built for growing teams</li>
-                </ul>
-
-                <button
-                  type="button"
-                  className="pricing-plan-button pricing-secondary"
-                  onClick={() =>
-                    alert(
-                      "Business checkout will be connected next."
-                    )
-                  }
-                >
-                  Choose Business
-                </button>
-              </section>
-            </div>
-
-            <div className="pricing-trust">
-              <span>✓ No payment is taken from this screen</span>
-              <span>✓ Upgrade whenever you need more usage</span>
-              <span>✓ USD pricing for international customers</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showHistory && (
         <aside className="history-panel">
@@ -1770,7 +1886,7 @@ ${userMessage}`
                   document.getElementById("business-crm-lead-status")?.value || "new";
 
                 if (!name) {
-                  alert("Lead name enter karo.");
+                  alert("🚀 " + p1.replace(" Active", " is fully operational & active!"));
                   return;
                 }
 
@@ -1789,33 +1905,164 @@ ${userMessage}`
             </button>
           </div>
 
-          <div className="business-crm-list">
-            {businessLeads.length === 0 ? (
-              <div className="business-crm-empty">
-                No leads yet. Add your first lead above.
-              </div>
-            ) : (
-              businessLeads.map((lead) => (
-                <div className="business-crm-card" key={lead.id}>
-                  <div className="business-crm-card-main">
-                    <strong>{lead.name}</strong>
-                    <span>{lead.contact || "No contact provided"}</span>
-                    <small>Status: {lead.status}</small>
-                  </div>
-
+          <div className="business-crm-toolbar">
+            <input
+              className="business-crm-search"
+              value={leadSearch}
+              onChange={(e) => setLeadSearch(e.target.value)}
+              placeholder="Search leads by name or contact..."
+              aria-label="Search leads"
+            />
+            {leadCanAssign && (
+              <div className="business-crm-filters">
+                {["all", "assigned", "unassigned"].map((filter) => (
                   <button
+                    key={filter}
                     type="button"
-                    className="business-crm-delete"
-                    onClick={() =>
-                      deleteBusinessLead(lead.id)
-                    }
-                    title="Delete lead"
+                    className={leadFilter === filter ? "active" : ""}
+                    onClick={() => setLeadFilter(filter)}
                   >
-                    🗑️
+                    {filter === "all" ? "All" : filter === "assigned" ? "Assigned" : "Unassigned"}
                   </button>
-                </div>
-              ))
+                ))}
+              </div>
             )}
+          </div>
+
+          <div className="business-crm-list">
+            {(() => {
+              const query = leadSearch.trim().toLowerCase();
+              const visibleLeads = businessLeads.filter((lead) => {
+                const matchesSearch =
+                  !query ||
+                  String(lead.name || "").toLowerCase().includes(query) ||
+                  String(lead.contact || "").toLowerCase().includes(query);
+                const assigned = Boolean(lead.assigned_to);
+                const matchesFilter =
+                  !leadCanAssign ||
+                  leadFilter === "all" ||
+                  (leadFilter === "assigned" && assigned) ||
+                  (leadFilter === "unassigned" && !assigned);
+                return matchesSearch && matchesFilter;
+              });
+
+              if (businessLeadsLoading) {
+                return <div className="business-crm-empty">Loading leads...</div>;
+              }
+
+              if (visibleLeads.length === 0) {
+                return (
+                  <div className="business-crm-empty">
+                    {businessLeads.length === 0
+                      ? "No leads yet. Add your first lead above."
+                      : "No leads match your search or filter."}
+                  </div>
+                );
+              }
+
+              return visibleLeads.map((lead) => (
+                <div className="business-crm-card" key={lead.id}>
+                  {leadEditingId === lead.id ? (
+                    <div className="business-crm-edit-form">
+                      <input
+                        value={leadEditForm.name}
+                        onChange={(e) => setLeadEditForm((v) => ({ ...v, name: e.target.value }))}
+                        placeholder="Lead name"
+                        aria-label="Lead name"
+                      />
+                      <input
+                        value={leadEditForm.contact}
+                        onChange={(e) => setLeadEditForm((v) => ({ ...v, contact: e.target.value }))}
+                        placeholder="Email / phone"
+                        aria-label="Lead contact"
+                      />
+                      <select
+                        value={leadEditForm.status}
+                        onChange={(e) => setLeadEditForm((v) => ({ ...v, status: e.target.value }))}
+                        aria-label="Lead status"
+                      >
+                        <option value="new">New</option>
+                        <option value="warm">Warm</option>
+                        <option value="hot">Hot</option>
+                        <option value="cold">Cold</option>
+                      </select>
+                      <div className="business-crm-edit-actions">
+                        <button
+                          type="button"
+                          disabled={leadSaving || !leadEditForm.name.trim()}
+                          onClick={() => updateBusinessLead(lead.id, {
+                            ...leadEditForm,
+                            notes: lead.notes || ""
+                          })}
+                        >
+                          {leadSaving ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLeadEditingId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="business-crm-card-main">
+                        <strong>{lead.name}</strong>
+                        <span>{lead.contact || "No contact provided"}</span>
+                        <small>Status: {lead.status}</small>
+                        <small className="business-crm-assignee">
+                          {lead.assigned_to_name
+                            ? "Assigned to: " + lead.assigned_to_name
+                            : "Not assigned"}
+                        </small>
+                      </div>
+
+                      <div className="business-crm-card-actions">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLeadEditingId(lead.id);
+                            setLeadEditForm({
+                              name: lead.name || "",
+                              contact: lead.contact || "",
+                              status: lead.status || "new"
+                            });
+                          }}
+                        >
+                          ✏️ Edit
+                        </button>
+
+                        {leadCanAssign && (
+                          <select
+                            className="business-crm-assign"
+                            value={lead.assigned_to || ""}
+                            onChange={(e) => assignBusinessLead(lead.id, e.target.value)}
+                            aria-label={"Assign " + lead.name}
+                          >
+                            <option value="">Unassigned</option>
+                            {leadTeamMembers.map((member) => (
+                              <option key={member.id} value={member.id}>
+                                {member.name} ({member.role})
+                              </option>
+                            ))}
+                          </select>
+                        )}
+
+                        <button
+                          type="button"
+                          className="business-crm-delete"
+                          onClick={() => deleteBusinessLead(lead.id)}
+                          title="Delete lead"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ));
+            })()}
           </div>
         </section>
       )}
@@ -1826,7 +2073,8 @@ ${userMessage}`
             {appMode === "business" ? (
               <>
                 <div className="robot">💼</div>
-                <h2>VikoP Business Assistant</h2>
+                <h2>
+VikoP Business Assistant</h2>
                 <p>Your AI partner for smarter business decisions.</p>
               </>
             ) : (

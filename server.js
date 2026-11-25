@@ -1,3 +1,7 @@
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createRequire } from "node:module";
+import { updateLeadPipelineStage } from "./business-ai.js";
+import { requirePermission } from "./permissions.js";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -7,13 +11,21 @@ import {
   login,
   authenticate,
   verifyEmail,
-  resendVerificationEmail
+  resendVerificationEmail,
+  createToken
 } from "./auth.js";
 import { registerBusinessAIRoutes } from "./business-ai.js";
+import { registerTeamRoutes } from "./team-management.js";
+import { registerMultiBusinessRoutes } from "./multi-business.js";
+import { registerAutomationRoutes } from "./automation.js";
+import { registerApiWebhookRoutes, initializeApiWebhookTables, startWebhookDeliveryWorker } from "./api-webhooks.js";
 import pool from "./db.js";
 import multer from "multer";
 import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
+
+const require = createRequire(import.meta.url);
+const webpush = require("web-push");
 
 dotenv.config();
 
@@ -318,6 +330,7 @@ async function runCurl(args, options = {}) {
 app.post(
   "/api/upload-pdf-stream",
   uploadLimiter,
+  authenticate,
   express.raw({ type: "application/pdf", limit: "50mb" }),
   async (req, res) => {
     try {
@@ -416,6 +429,7 @@ app.post(
 app.post(
   "/api/upload-pdf",
   uploadLimiter,
+  authenticate,
   pdfUpload.single("file"),
   async (req, res) => {
     let tempPath = null;
@@ -508,6 +522,10 @@ app.use("/api/ai", chatLimiter);
 
 // Permanent VikoP Business AI routes
 registerBusinessAIRoutes(app);
+registerTeamRoutes(app);
+registerMultiBusinessRoutes(app);
+registerAutomationRoutes(app);
+registerApiWebhookRoutes(app);
 
 
 const PLAN_LIMITS = Object.freeze({
@@ -516,151 +534,118 @@ const PLAN_LIMITS = Object.freeze({
   business: 2000
 });
 
-async function reserveAIRequest(userId) {
-  const client = await pool.connect();
+function resolveMainAIPlan(sub) {
+  if (!sub || !Object.prototype.hasOwnProperty.call(PLAN_LIMITS, sub.plan)) {
+    return { plan: "free", expired: false };
+  }
 
+  const now = Date.now();
+  const periodEnd = sub.current_period_end == null
+    ? null
+    : new Date(sub.current_period_end).getTime();
+
+  if (sub.status === "active") {
+    if (sub.plan !== "free" &&
+        periodEnd !== null &&
+        (!Number.isFinite(periodEnd) || periodEnd <= now)) {
+      return { plan: "free", expired: true };
+    }
+
+    return { plan: sub.plan, expired: false };
+  }
+
+  if (sub.status === "trialing") {
+    const trialEnd = sub.trial_ends_at
+      ? new Date(sub.trial_ends_at).getTime()
+      : 0;
+
+    if (Number.isFinite(trialEnd) && trialEnd > now) {
+      return { plan: sub.plan, expired: false };
+    }
+
+    return { plan: "free", expired: true };
+  }
+
+  if (sub.status === "canceled" || sub.status === "past_due") {
+    if (sub.plan !== "free" &&
+        periodEnd !== null &&
+        Number.isFinite(periodEnd) &&
+        periodEnd > now) {
+      return { plan: sub.plan, expired: false };
+    }
+  }
+
+  return { plan: "free", expired: false };
+}
+
+
+async function reserveAIRequest(userId, businessId, role) {
+  const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    let subscriptionResult = await client.query(
-      `
-      SELECT
-        plan,
-        status,
-        trial_ends_at,
-        current_period_end
-      FROM subscriptions
-      WHERE user_id = $1
-      FOR UPDATE
-      `,
-      [userId]
-    );
+    const ownerQuery =
+      "SELECT s.user_id AS subscription_user_id, s.plan, s.status, " +
+      "s.trial_ends_at, s.current_period_end " +
+      "FROM subscriptions s JOIN users owner ON owner.id = s.user_id " +
+      "WHERE owner.business_id = $1 AND owner.role = 'owner' " +
+      "ORDER BY owner.created_at ASC LIMIT 1 FOR UPDATE OF s";
 
-    if (subscriptionResult.rows.length === 0) {
+    let result = await client.query(ownerQuery, [businessId]);
+
+    if (result.rows.length === 0 && role === "owner") {
       await client.query(
-        `
-        INSERT INTO subscriptions (
-          id,
-          user_id,
-          plan,
-          status
-        )
-        VALUES (gen_random_uuid(), $1, 'free', 'active')
-        ON CONFLICT (user_id) DO NOTHING
-        `,
+        "INSERT INTO subscriptions (id, user_id, plan, status) " +
+        "VALUES (gen_random_uuid(), $1, 'free', 'active') " +
+        "ON CONFLICT (user_id) DO NOTHING",
         [userId]
       );
-
-      subscriptionResult = await client.query(
-        `
-        SELECT
-          plan,
-          status,
-          trial_ends_at,
-          current_period_end
-        FROM subscriptions
-        WHERE user_id = $1
-        FOR UPDATE
-        `,
-        [userId]
-      );
+      result = await client.query(ownerQuery, [businessId]);
     }
 
-    const subscription = subscriptionResult.rows[0];
+    const subscription = result.rows[0] || null;
+    const resolved = resolveMainAIPlan(subscription);
+    let plan = resolved.plan;
 
-    let plan = subscription?.plan || "free";
-    let status = subscription?.status || "active";
-
-    if (
-      status === "trialing" &&
-      subscription?.trial_ends_at &&
-      new Date(subscription.trial_ends_at).getTime() <= Date.now()
-    ) {
-      plan = "free";
-      status = "expired";
-
+    if (resolved.expired && subscription) {
       await client.query(
-        `
-        UPDATE subscriptions
-        SET
-          plan = 'free',
-          status = 'expired',
-          updated_at = NOW()
-        WHERE user_id = $1
-        `,
-        [userId]
+        "UPDATE subscriptions SET plan = 'free', status = 'expired', " +
+        "updated_at = NOW() WHERE user_id = $1 AND status = $2",
+        [subscription.subscription_user_id, subscription.status]
       );
     }
 
-    if (!PLAN_LIMITS[plan]) {
-      plan = "free";
-    }
-
+    if (!PLAN_LIMITS[plan]) plan = "free";
     const limit = PLAN_LIMITS[plan];
 
     await client.query(
-      `
-      INSERT INTO usage_daily (
-        id,
-        user_id,
-        usage_date,
-        ai_requests
-      )
-      VALUES (
-        gen_random_uuid(),
-        $1,
-        CURRENT_DATE,
-        0
-      )
-      ON CONFLICT (user_id, usage_date) DO NOTHING
-      `,
+      "INSERT INTO usage_daily (id, user_id, usage_date, ai_requests) " +
+      "VALUES (gen_random_uuid(), $1, CURRENT_DATE, 0) " +
+      "ON CONFLICT (user_id, usage_date) DO NOTHING",
       [userId]
     );
 
-    const usageResult = await client.query(
-      `
-      SELECT ai_requests
-      FROM usage_daily
-      WHERE user_id = $1
-        AND usage_date = CURRENT_DATE
-      FOR UPDATE
-      `,
+    const usage = await client.query(
+      "SELECT ai_requests FROM usage_daily WHERE user_id = $1 " +
+      "AND usage_date = CURRENT_DATE FOR UPDATE",
       [userId]
     );
 
-    const used = Number(usageResult.rows[0]?.ai_requests || 0);
+    const used = Number(usage.rows[0]?.ai_requests || 0);
 
     if (used >= limit) {
       await client.query("ROLLBACK");
-
-      return {
-        allowed: false,
-        plan,
-        used,
-        limit
-      };
+      return { allowed: false, plan, used, limit };
     }
 
     await client.query(
-      `
-      UPDATE usage_daily
-      SET
-        ai_requests = ai_requests + 1,
-        updated_at = NOW()
-      WHERE user_id = $1
-        AND usage_date = CURRENT_DATE
-      `,
+      "UPDATE usage_daily SET ai_requests = ai_requests + 1, " +
+      "updated_at = NOW() WHERE user_id = $1 AND usage_date = CURRENT_DATE",
       [userId]
     );
 
     await client.query("COMMIT");
-
-    return {
-      allowed: true,
-      plan,
-      used: used + 1,
-      limit
-    };
+    return { allowed: true, plan, used: used + 1, limit };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -668,7 +653,6 @@ async function reserveAIRequest(userId) {
     client.release();
   }
 }
-
 async function releaseAIRequest(userId) {
   try {
     await pool.query(
@@ -716,7 +700,7 @@ app.post("/chat", chatLimiter, authenticate, async (req, res) => {
   }
 
   try {
-    const usage = await reserveAIRequest(req.user.userId);
+    const usage = await reserveAIRequest(req.user.userId, req.user.businessId, req.user.role);
 
     if (!usage.allowed) {
       const upgradePlan =
@@ -1339,6 +1323,29 @@ async function initializeDatabase() {
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ;
 
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'owner';
+
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS business_memberships (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, business_id)
+    );
+
+    INSERT INTO business_memberships (user_id, business_id)
+    SELECT id, business_id FROM users
+    ON CONFLICT (user_id, business_id) DO NOTHING;
+
+    CREATE INDEX IF NOT EXISTS idx_business_memberships_business
+      ON business_memberships(business_id);
+
     CREATE TABLE IF NOT EXISTS leads (
       id UUID PRIMARY KEY,
       business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
@@ -1350,6 +1357,15 @@ async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE leads
+      ADD COLUMN IF NOT EXISTS pipeline_stage TEXT NOT NULL DEFAULT 'new';
+
+    ALTER TABLE leads
+      ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id) ON DELETE SET NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_leads_assigned_to
+      ON leads(business_id, assigned_to);
 
     CREATE INDEX IF NOT EXISTS idx_leads_business
       ON leads(business_id);
@@ -1387,6 +1403,99 @@ async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_subscriptions_plan
       ON subscriptions(plan);
 
+
+    CREATE TABLE IF NOT EXISTS reminders (
+      id UUID PRIMARY KEY,
+      business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      assigned_to UUID REFERENCES users(id) ON DELETE SET NULL,
+      title VARCHAR(160) NOT NULL,
+      description TEXT,
+      type VARCHAR(20) NOT NULL DEFAULT 'follow_up'
+        CHECK (type IN ('follow_up', 'meeting', 'task')),
+      due_at TIMESTAMPTZ NOT NULL,
+      priority VARCHAR(10) NOT NULL DEFAULT 'medium'
+        CHECK (priority IN ('low', 'medium', 'high')),
+      status VARCHAR(15) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'completed')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reminders_business_due
+      ON reminders(business_id, due_at);
+
+    CREATE INDEX IF NOT EXISTS idx_reminders_assigned
+      ON reminders(business_id, assigned_to, due_at);
+
+    CREATE TABLE IF NOT EXISTS reminder_push_subscriptions (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      subscription JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reminder_push_user_business
+      ON reminder_push_subscriptions(user_id, business_id);
+
+    CREATE TABLE IF NOT EXISTS reminder_push_deliveries (
+      id UUID PRIMARY KEY,
+      reminder_id UUID NOT NULL REFERENCES reminders(id) ON DELETE CASCADE,
+      due_at TIMESTAMPTZ NOT NULL,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL,
+      sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(reminder_id, due_at, user_id, endpoint)
+    );
+
+
+    CREATE TABLE IF NOT EXISTS business_automations (
+      id UUID PRIMARY KEY,
+      business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      name VARCHAR(80) NOT NULL,
+      trigger_event VARCHAR(40) NOT NULL DEFAULT 'lead.created',
+      action_type VARCHAR(40) NOT NULL CHECK (action_type IN ('ai_qualify_lead','create_followup_reminder')),
+      config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_business_automations_active
+      ON business_automations(business_id,is_enabled);
+
+    CREATE TABLE IF NOT EXISTS business_automation_runs (
+      id UUID PRIMARY KEY,
+      business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      automation_id UUID NOT NULL REFERENCES business_automations(id) ON DELETE CASCADE,
+      lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+      status VARCHAR(15) NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running','success','failed')),
+      result JSONB,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      UNIQUE(automation_id,lead_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_automation_runs_business
+      ON business_automation_runs(business_id,created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS business_ai_settings (
+      business_id UUID PRIMARY KEY REFERENCES businesses(id) ON DELETE CASCADE,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      instructions TEXT NOT NULL DEFAULT '',
+      tone VARCHAR(20) NOT NULL DEFAULT 'professional',
+      personality VARCHAR(500) NOT NULL DEFAULT '',
+      language VARCHAR(40) NOT NULL DEFAULT 'Auto',
+      welcome_message VARCHAR(500) NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS usage_daily (
       id UUID PRIMARY KEY,
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1403,21 +1512,550 @@ async function initializeDatabase() {
       ON usage_daily(user_id, usage_date);
   `);
 
+  await initializeApiWebhookTables();
+  startWebhookDeliveryWorker();
   console.log("Database tables ready.");
 }
+
+
+// ---------- BUSINESS-SCOPED REMINDERS ----------
+function parseReminderInput(body, current = {}) {
+  const title = String(body.title ?? current.title ?? "").trim();
+  const description = String(body.description ?? current.description ?? "").trim();
+  const type = String(body.type ?? current.type ?? "follow_up");
+  const priority = String(body.priority ?? current.priority ?? "medium");
+  const status = String(body.status ?? current.status ?? "pending");
+  const dueAt = body.dueAt ?? body.due_at ?? current.due_at;
+  const assignedTo = body.assignedTo !== undefined
+    ? (body.assignedTo || null)
+    : (current.assigned_to || null);
+
+  if (!title || title.length > 160)
+    throw new Error("Title is required (maximum 160 characters).");
+  if (description.length > 3000)
+    throw new Error("Description is too long.");
+  if (!["follow_up", "meeting", "task"].includes(type))
+    throw new Error("Invalid reminder category.");
+  if (!["low", "medium", "high"].includes(priority))
+    throw new Error("Invalid priority.");
+  if (!["pending", "completed"].includes(status))
+    throw new Error("Invalid status.");
+  if (!dueAt || !Number.isFinite(new Date(dueAt).getTime()))
+    throw new Error("A valid due date and time are required.");
+
+  return {
+    title, description, type, priority, status,
+    dueAt: new Date(dueAt),
+    assignedTo
+  };
+}
+
+async function checkReminderAssignee(assignedTo, req) {
+  if (req.user.role === "sales") {
+    if (assignedTo && String(assignedTo) !== String(req.user.id))
+      throw new Error("Sales employees can only assign reminders to themselves.");
+    return req.user.id;
+  }
+
+  if (!assignedTo) return null;
+
+  const result = await pool.query(
+    `SELECT id FROM users
+     WHERE id = $1 AND business_id = $2 AND is_active = TRUE
+     LIMIT 1`,
+    [assignedTo, req.user.businessId]
+  );
+
+  if (!result.rows.length)
+    throw new Error("Employee not found or inactive in your business.");
+
+  return result.rows[0].id;
+}
+
+function reminderCanWrite(req, res) {
+  if (req.user.role === "viewer") {
+    res.status(403).json({ error: "Your role cannot modify reminders." });
+    return false;
+  }
+  return true;
+}
+
+app.get("/api/reminders/team", authenticate, requirePermission("reminders:view"), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, role FROM users
+       WHERE business_id = $1 AND is_active = TRUE
+         AND ($2 <> 'sales' OR id = $3)
+       ORDER BY name`,
+      [req.user.businessId, req.user.role, req.user.id]
+    );
+    res.json({ members: result.rows });
+  } catch (error) {
+    console.error("Reminder team error:", error);
+    res.status(500).json({ error: "Could not load employees." });
+  }
+});
+
+app.get("/api/reminders", authenticate, requirePermission("reminders:view"), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.id, r.title, r.description, r.type, r.due_at,
+              r.priority, r.status, r.assigned_to, r.created_by,
+              r.created_at, r.updated_at,
+              u.name AS assigned_to_name,
+              CASE
+                WHEN r.status = 'completed' THEN 'completed'
+                WHEN r.due_at < NOW() THEN 'overdue'
+                ELSE 'pending'
+              END AS display_status
+       FROM reminders r
+       LEFT JOIN users u
+         ON u.id = r.assigned_to AND u.business_id = r.business_id
+       WHERE r.business_id = $1
+         AND ($2 <> 'sales' OR r.assigned_to = $3)
+       ORDER BY
+         CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END,
+         r.due_at ASC`,
+      [req.user.businessId, req.user.role, req.user.id]
+    );
+    res.json({
+      reminders: result.rows,
+      canWrite: req.user.role !== "viewer"
+    });
+  } catch (error) {
+    console.error("Reminder list error:", error);
+    res.status(500).json({ error: "Could not load reminders." });
+  }
+});
+
+app.post("/api/reminders", authenticate, requirePermission("reminders:manage"), async (req, res) => {
+  if (!reminderCanWrite(req, res)) return;
+
+  try {
+    const input = parseReminderInput(req.body || {});
+    const assignee = await checkReminderAssignee(input.assignedTo, req);
+
+    const result = await pool.query(
+      `INSERT INTO reminders
+       (id, business_id, created_by, assigned_to, title, description,
+        type, due_at, priority, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING *`,
+      [
+        randomUUID(), req.user.businessId, req.user.id, assignee,
+        input.title, input.description || null, input.type,
+        input.dueAt, input.priority, input.status
+      ]
+    );
+
+    res.status(201).json({ reminder: result.rows[0] });
+  } catch (error) {
+    if (error.message.startsWith("Title") ||
+        error.message.startsWith("Description") ||
+        error.message.startsWith("Invalid") ||
+        error.message.startsWith("A valid") ||
+        error.message.startsWith("Employee") ||
+        error.message.startsWith("Sales employees")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("Reminder create error:", error);
+    res.status(500).json({ error: "Could not create reminder." });
+  }
+});
+
+app.patch("/api/reminders/:id", authenticate, requirePermission("reminders:manage"), async (req, res) => {
+  if (!reminderCanWrite(req, res)) return;
+
+  try {
+    const existing = await pool.query(
+      `SELECT * FROM reminders
+       WHERE id = $1 AND business_id = $2
+         AND ($3 <> 'sales' OR assigned_to = $4)
+       LIMIT 1`,
+      [req.params.id, req.user.businessId, req.user.role, req.user.id]
+    );
+
+    if (!existing.rows.length)
+      return res.status(404).json({ error: "Reminder not found." });
+
+    const input = parseReminderInput(req.body || {}, existing.rows[0]);
+    const assignee = await checkReminderAssignee(input.assignedTo, req);
+
+    const result = await pool.query(
+      `UPDATE reminders
+       SET title=$1, description=$2, type=$3, due_at=$4,
+           priority=$5, status=$6, assigned_to=$7, updated_at=NOW()
+       WHERE id=$8 AND business_id=$9
+         AND ($10 <> 'sales' OR assigned_to = $11)
+       RETURNING *`,
+      [
+        input.title, input.description || null, input.type,
+        input.dueAt, input.priority, input.status, assignee,
+        req.params.id, req.user.businessId, req.user.role, req.user.id
+      ]
+    );
+
+    res.json({ reminder: result.rows[0] });
+  } catch (error) {
+    if (error.message.startsWith("Title") ||
+        error.message.startsWith("Description") ||
+        error.message.startsWith("Invalid") ||
+        error.message.startsWith("A valid") ||
+        error.message.startsWith("Employee") ||
+        error.message.startsWith("Sales employees")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("Reminder update error:", error);
+    res.status(500).json({ error: "Could not update reminder." });
+  }
+});
+
+app.delete("/api/reminders/:id", authenticate, requirePermission("reminders:manage"), async (req, res) => {
+  if (!reminderCanWrite(req, res)) return;
+
+  try {
+    const result = await pool.query(
+      `DELETE FROM reminders
+       WHERE id=$1 AND business_id=$2
+         AND ($3 <> 'sales' OR assigned_to = $4)
+       RETURNING id`,
+      [req.params.id, req.user.businessId, req.user.role, req.user.id]
+    );
+
+    if (!result.rows.length)
+      return res.status(404).json({ error: "Reminder not found or access denied." });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Reminder delete error:", error);
+    res.status(500).json({ error: "Could not delete reminder." });
+  }
+});
+
+
+// ---------- REMINDER BACKGROUND PUSH ----------
+function configureReminderPush() {
+  const publicKey = process.env.VAPID_PUBLIC_KEY;
+  const privateKey = process.env.VAPID_PRIVATE_KEY;
+  const subject = process.env.VAPID_SUBJECT || "https://vikop-ai.onrender.com";
+  if (!publicKey || !privateKey) return false;
+  try {
+    webpush.setVapidDetails(subject, publicKey, privateKey);
+    return true;
+  } catch (error) {
+    console.error("Reminder push VAPID configuration error:", error.message);
+    return false;
+  }
+}
+
+app.get("/api/push/public-key", authenticate, (_req, res) => {
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    return res.status(503).json({ error: "Background notifications are not configured yet." });
+  }
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
+});
+
+app.post("/api/push/subscribe", authenticate, async (req, res) => {
+  try {
+    const subscription = req.body?.subscription;
+    const endpoint = subscription?.endpoint;
+    const p256dh = subscription?.keys?.p256dh;
+    const auth = subscription?.keys?.auth;
+
+    if (
+      typeof endpoint !== "string" ||
+      !endpoint.startsWith("https://") ||
+      typeof p256dh !== "string" ||
+      typeof auth !== "string"
+    ) {
+      return res.status(400).json({ error: "Invalid push subscription." });
+    }
+
+    await pool.query(
+      `INSERT INTO reminder_push_subscriptions
+       (id, user_id, business_id, endpoint, subscription)
+       VALUES ($1,$2,$3,$4,$5::jsonb)
+       ON CONFLICT (endpoint) DO UPDATE SET
+         user_id=EXCLUDED.user_id,
+         business_id=EXCLUDED.business_id,
+         subscription=EXCLUDED.subscription,
+         updated_at=NOW()`,
+      [randomUUID(), req.user.id, req.user.businessId, endpoint, JSON.stringify(subscription)]
+    );
+
+    res.status(201).json({ success: true });
+  } catch (error) {
+    console.error("Reminder push subscribe error:", error.message);
+    res.status(500).json({ error: "Could not enable background notifications." });
+  }
+});
+
+app.delete("/api/push/subscribe", authenticate, async (req, res) => {
+  try {
+    const endpoint = req.body?.endpoint;
+    if (typeof endpoint !== "string") {
+      return res.status(400).json({ error: "A valid subscription endpoint is required." });
+    }
+    await pool.query(
+      `DELETE FROM reminder_push_subscriptions
+       WHERE endpoint=$1 AND user_id=$2 AND business_id=$3`,
+      [endpoint, req.user.id, req.user.businessId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Reminder push unsubscribe error:", error.message);
+    res.status(500).json({ error: "Could not disable background notifications." });
+  }
+});
+
+app.post("/api/internal/reminders/dispatch", async (req, res) => {
+  const secret = process.env.REMINDER_DISPATCH_SECRET;
+  const header = req.get("authorization") || "";
+  const suppliedText = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (!secret) {
+    return res.status(503).json({ error: "Reminder dispatch is not configured." });
+  }
+
+  const supplied = Buffer.from(suppliedText);
+  const expected = Buffer.from(secret);
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    return res.status(401).json({ error: "Unauthorized." });
+  }
+
+  if (!configureReminderPush()) {
+    return res.status(503).json({ error: "Push delivery is not configured." });
+  }
+
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  try {
+    const due = await pool.query(
+      `SELECT r.id AS reminder_id, r.business_id, r.title, r.description,
+              r.type, r.priority, r.due_at, u.id AS user_id,
+              s.endpoint, s.subscription
+       FROM reminders r
+       CROSS JOIN LATERAL (
+         SELECT r.created_by AS user_id
+         UNION
+         SELECT r.assigned_to AS user_id
+       ) recipients
+       JOIN users u
+         ON u.id = recipients.user_id
+        AND u.business_id = r.business_id
+        AND u.is_active = TRUE
+       JOIN reminder_push_subscriptions s
+         ON s.user_id = u.id
+        AND s.business_id = r.business_id
+       WHERE r.status = 'pending'
+         AND r.due_at <= NOW()
+         AND recipients.user_id IS NOT NULL
+       ORDER BY r.due_at ASC
+       LIMIT 500`
+    );
+
+    for (const item of due.rows) {
+      const claim = await pool.query(
+        `INSERT INTO reminder_push_deliveries
+         (id, reminder_id, due_at, user_id, endpoint)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (reminder_id, due_at, user_id, endpoint) DO NOTHING
+         RETURNING id`,
+        [randomUUID(), item.reminder_id, item.due_at, item.user_id, item.endpoint]
+      );
+
+      if (!claim.rows.length) {
+        skipped++;
+        continue;
+      }
+
+      const payload = JSON.stringify({
+        title: "VikoP AI — Reminder due",
+        body: [item.title, item.description].filter(Boolean).join(" — ").slice(0, 240),
+        reminderId: item.reminder_id,
+        url: "/"
+      });
+
+      try {
+        await webpush.sendNotification(item.subscription, payload, {
+          TTL: 86400,
+          urgency: item.priority === "high" ? "high" : "normal"
+        });
+        sent++;
+      } catch (error) {
+        failed++;
+        await pool.query(
+          `DELETE FROM reminder_push_deliveries
+           WHERE reminder_id=$1 AND due_at=$2 AND user_id=$3 AND endpoint=$4`,
+          [item.reminder_id, item.due_at, item.user_id, item.endpoint]
+        );
+
+        if (error.statusCode === 404 || error.statusCode === 410) {
+          await pool.query(
+            `DELETE FROM reminder_push_subscriptions WHERE endpoint=$1`,
+            [item.endpoint]
+          );
+        }
+      }
+    }
+
+    res.json({ success: true, sent, failed, skipped });
+  } catch (error) {
+    console.error("Reminder push dispatch error:", error.message);
+    res.status(500).json({ error: "Reminder notification dispatch failed." });
+  }
+});
+// ---------- END REMINDER BACKGROUND PUSH ----------
+
+// ---------- END REMINDERS ----------
 
 const PORT = process.env.PORT || 3001;
 
 initializeDatabase()
   .then(() => {
     console.log("Database initialization completed.");
-  })
-  .catch((error) => {
-    console.error("Database initialization failed:", error);
-    console.warn("Starting AI server without database initialization.");
-  })
-  .finally(() => {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`AI server running on port ${PORT}`);
     });
+  })
+  .catch(async (error) => {
+    console.error("Database initialization failed. Server will not start:", error);
+    process.exitCode = 1;
+    await pool.end().catch(() => {});
   });
+
+
+
+// CRM Pipeline Stage Update Endpoint
+app.patch("/api/leads/:id/stage", authenticate, requirePermission("pipeline:update"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stage } = req.body;
+    const businessId = req.user.businessId;
+
+    if (!stage) {
+      return res.status(400).json({ error: "Stage is required" });
+    }
+
+    const updatedLead = await updateLeadPipelineStage(
+      id,
+      businessId,
+      stage,
+      req.user.role === "sales" ? req.user.id : null
+    );
+    if (!updatedLead) {
+      return res.status(404).json({ error: "Lead not found" });
+    }
+
+    res.json({ success: true, lead: updatedLead });
+  } catch (error) {
+    console.error("Error updating lead stage:", error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Business-scoped sales reports.
+app.get("/api/sales-reports", authenticate, requirePermission("reports:view"), async (req, res) => {
+  try {
+    const businessId = req.user.businessId;
+    const role = req.user.role || "owner";
+    const userId = req.user.id;
+    const params = [businessId, role, userId];
+
+    const summary = await pool.query(
+      `SELECT COUNT(*)::int AS total_leads,
+       COUNT(*) FILTER (WHERE pipeline_stage = 'won')::int AS closed_deals,
+       COUNT(*) FILTER (WHERE pipeline_stage NOT IN ('won','lost'))::int AS active_leads,
+       COUNT(*) FILTER (WHERE pipeline_stage = 'lost')::int AS lost_leads
+       FROM leads WHERE business_id = $1
+       AND ($2 <> 'sales' OR assigned_to = $3)`, params
+    );
+
+    const pipeline = await pool.query(
+      `SELECT pipeline_stage AS stage, COUNT(*)::int AS total
+       FROM leads WHERE business_id = $1
+       AND ($2 <> 'sales' OR assigned_to = $3)
+       GROUP BY pipeline_stage ORDER BY pipeline_stage`, params
+    );
+
+    let employees = [];
+    if (["owner", "admin", "manager"].includes(role)) {
+      const team = await pool.query(
+        `SELECT u.id, u.name, COUNT(l.id)::int AS total_leads,
+         COUNT(l.id) FILTER (WHERE l.pipeline_stage = 'won')::int AS closed_deals
+         FROM users u LEFT JOIN leads l
+         ON l.business_id = u.business_id AND l.assigned_to = u.id
+         WHERE u.business_id = $1 AND u.role = 'sales' AND u.is_active = TRUE
+         GROUP BY u.id, u.name ORDER BY total_leads DESC, u.name`, [businessId]
+      );
+      employees = team.rows.map(x => ({
+        id: x.id, name: x.name, total_leads: Number(x.total_leads),
+        closed_deals: Number(x.closed_deals),
+        conversion_rate: Number(x.total_leads)
+          ? Number((x.closed_deals * 100 / x.total_leads).toFixed(1)) : 0
+      }));
+    }
+
+    const r = summary.rows[0] || {};
+    const total = Number(r.total_leads || 0);
+    const won = Number(r.closed_deals || 0);
+    res.json({
+      success: true,
+      report: {
+        total_leads: total, closed_deals: won,
+        active_leads: Number(r.active_leads || 0),
+        lost_leads: Number(r.lost_leads || 0),
+        conversion_rate: total ? Number((won * 100 / total).toFixed(1)) : 0,
+        pipeline: pipeline.rows.map(x => ({stage: x.stage, total: Number(x.total)})),
+        employees
+      }
+    });
+  } catch (error) {
+    console.error("Sales report error:", error);
+    res.status(500).json({error: "Could not load sales report."});
+  }
+});
+
+// Read the same subscription and daily usage records used by AI quota enforcement.
+app.get("/api/ai-quota", authenticate, async (req, res) => {
+  try {
+    const [subscriptionResult, usageResult] = await Promise.all([
+      pool.query(
+        "SELECT s.plan, s.status, s.trial_ends_at, s.current_period_end " +
+        "FROM subscriptions s JOIN users owner ON owner.id = s.user_id " +
+        "WHERE owner.business_id = $1 AND owner.role = 'owner' " +
+        "ORDER BY owner.created_at ASC LIMIT 1",
+        [req.user.businessId]
+      ),
+      pool.query(
+        `SELECT ai_requests
+         FROM usage_daily
+         WHERE user_id = $1 AND usage_date = CURRENT_DATE
+         LIMIT 1`,
+        [req.user.userId]
+      )
+    ]);
+
+    const subscription = subscriptionResult.rows[0] || null;
+    const resolved = resolveMainAIPlan(subscription);
+    const plan = PLAN_LIMITS[resolved.plan] ? resolved.plan : "free";
+    const limit = PLAN_LIMITS[plan];
+    const used = Number(usageResult.rows[0]?.ai_requests || 0);
+
+    return res.json({
+      success: true,
+      plan,
+      daily_limit: limit,
+      requests_used: used,
+      requests_remaining: Math.max(0, limit - used)
+    });
+  } catch (error) {
+    console.error("AI quota lookup error:", error);
+    return res.status(500).json({ error: "Could not load AI quota." });
+  }
+});
+
+// Legacy roles, reminders and automation endpoints intentionally removed.
+// Use /api/team/members for team access. Other features need proper
+// authenticated, business-scoped database implementations before exposure.

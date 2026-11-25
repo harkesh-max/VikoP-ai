@@ -7,11 +7,13 @@ function createId() {
   return crypto.randomUUID();
 }
 
-function createToken(user) {
+export function createToken(user, activeBusinessId = null) {
   return jwt.sign(
     {
       userId: user.id,
-      businessId: user.business_id
+      businessId: activeBusinessId || user.business_id || user.businessId,
+      role: user.role,
+      tokenVersion: Number(user.token_version ?? user.tokenVersion ?? 0)
     },
     process.env.JWT_SECRET,
     { expiresIn: "7d" }
@@ -213,10 +215,13 @@ export async function register(req, res) {
       Date.now() + 24 * 60 * 60 * 1000
     );
 
-    await pool.query("BEGIN");
+    const client = await pool.connect();
 
     try {
-      await pool.query(
+      await client.query("BEGIN");
+
+      try {
+      await client.query(
         `INSERT INTO businesses (id, name, industry)
          VALUES ($1, $2, $3)`,
         [
@@ -226,7 +231,7 @@ export async function register(req, res) {
         ]
       );
 
-      await pool.query(
+      await client.query(
         `INSERT INTO users
          (
            id,
@@ -238,7 +243,7 @@ export async function register(req, res) {
            verification_token_hash,
            verification_expires_at
          )
-         VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7)`,
+         VALUES ($1, $2, $3, $4, $5, ${process.env.FREE_TESTING_MODE === "true" ? "TRUE" : "FALSE"}, $6, $7)`,
         [
           userId,
           businessId,
@@ -250,12 +255,18 @@ export async function register(req, res) {
         ]
       );
 
+      await client.query(
+        `INSERT INTO business_memberships (user_id, business_id)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [userId, businessId]
+      );
+
       const trialStartedAt = new Date();
       const trialEndsAt = new Date(
         trialStartedAt.getTime() + 7 * 24 * 60 * 60 * 1000
       );
 
-      await pool.query(
+      await client.query(
         `INSERT INTO subscriptions
          (
            id,
@@ -274,18 +285,23 @@ export async function register(req, res) {
         ]
       );
 
-      await pool.query("COMMIT");
-    } catch (error) {
-      await pool.query("ROLLBACK");
-      throw error;
+      await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      }
+    } finally {
+      client.release();
     }
 
     try {
-      await sendVerificationEmail({
-        to: normalizedEmail,
-        name: name.trim(),
-        token: verificationToken
-      });
+      if (process.env.FREE_TESTING_MODE !== "true") {
+        await sendVerificationEmail({
+          to: normalizedEmail,
+          name: name.trim(),
+          token: verificationToken
+        });
+      }
     } catch (emailError) {
       console.error(
         "Verification email send error:",
@@ -490,6 +506,9 @@ export async function login(req, res) {
         u.password_hash,
         u.business_id,
         u.email_verified,
+        u.role,
+        u.is_active,
+        u.token_version,
         b.name AS business_name,
         b.industry
        FROM users u
@@ -517,11 +536,15 @@ export async function login(req, res) {
       });
     }
 
-    if (!user.email_verified) {
+    if (!user.email_verified && process.env.FREE_TESTING_MODE !== "true") {
       return res.status(403).json({
         error:
           "Please verify your email before signing in."
       });
+    }
+
+    if (user.is_active === false) {
+      return res.status(403).json({ error: "This account is disabled." });
     }
 
     const token = createToken(user);
@@ -546,29 +569,53 @@ export async function login(req, res) {
   }
 }
 
-export function authenticate(req, res, next) {
+export async function authenticate(req, res, next) {
   try {
     const header = req.headers.authorization || "";
-
     if (!header.startsWith("Bearer ")) {
-      return res.status(401).json({
-        error: "Authentication required."
+      return res.status(401).json({ error: "Authentication required." });
+    }
+
+    const decoded = jwt.verify(header.slice(7), process.env.JWT_SECRET);
+    const result = await pool.query(
+      "SELECT id, business_id, role, is_active, token_version FROM users WHERE id = $1",
+      [decoded.userId]
+    );
+    const user = result.rows[0];
+
+    if (!user || user.is_active === false ||
+        Number(user.token_version || 0) !== Number(decoded.tokenVersion ?? 0)) {
+      return res.status(401).json({ error: "Account session is no longer valid." });
+    }
+
+    const activeBusinessId = decoded.businessId || user.business_id;
+    const membership = await pool.query(
+      `SELECT 1 FROM business_memberships
+       WHERE user_id = $1 AND business_id = $2 LIMIT 1`,
+      [user.id, activeBusinessId]
+    );
+
+    if (!membership.rows.length) {
+      return res.status(403).json({
+        error: "You do not have access to this business."
       });
     }
 
-    const token = header.slice(7);
+    req.user = {
+      ...decoded,
+      id: user.id,
+      userId: user.id,
+      businessId: activeBusinessId,
+      role: user.role,
+      tokenVersion: Number(user.token_version || 0)
+    };
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET
-    );
-
-    req.user = decoded;
-
-    next();
-  } catch {
-    return res.status(401).json({
-      error: "Invalid or expired authentication token."
-    });
+    return next();
+  } catch (error) {
+    if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Invalid or expired authentication token." });
+    }
+    console.error("Authentication error:", error);
+    return res.status(500).json({ error: "Unable to verify account." });
   }
 }
