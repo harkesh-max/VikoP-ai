@@ -7,13 +7,13 @@ function createId() {
   return crypto.randomUUID();
 }
 
-function createToken(user) {
+export function createToken(user, activeBusinessId = null) {
   return jwt.sign(
     {
       userId: user.id,
-      businessId: user.business_id,
-      role: user.role || "owner",
-      tokenVersion: Number(user.token_version || 0)
+      businessId: activeBusinessId || user.business_id || user.businessId,
+      role: user.role,
+      tokenVersion: Number(user.token_version ?? user.tokenVersion ?? 0)
     },
     process.env.JWT_SECRET,
     { expiresIn: "7d" }
@@ -243,7 +243,7 @@ export async function register(req, res) {
            verification_token_hash,
            verification_expires_at
          )
-         VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7)`,
+         VALUES ($1, $2, $3, $4, $5, ${process.env.FREE_TESTING_MODE === "true" ? "TRUE" : "FALSE"}, $6, $7)`,
         [
           userId,
           businessId,
@@ -253,6 +253,12 @@ export async function register(req, res) {
           verificationTokenHash,
           verificationExpiresAt
         ]
+      );
+
+      await client.query(
+        `INSERT INTO business_memberships (user_id, business_id)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [userId, businessId]
       );
 
       const trialStartedAt = new Date();
@@ -289,11 +295,13 @@ export async function register(req, res) {
     }
 
     try {
-      await sendVerificationEmail({
-        to: normalizedEmail,
-        name: name.trim(),
-        token: verificationToken
-      });
+      if (process.env.FREE_TESTING_MODE !== "true") {
+        await sendVerificationEmail({
+          to: normalizedEmail,
+          name: name.trim(),
+          token: verificationToken
+        });
+      }
     } catch (emailError) {
       console.error(
         "Verification email send error:",
@@ -528,7 +536,7 @@ export async function login(req, res) {
       });
     }
 
-    if (!user.email_verified) {
+    if (!user.email_verified && process.env.FREE_TESTING_MODE !== "true") {
       return res.status(403).json({
         error:
           "Please verify your email before signing in."
@@ -580,12 +588,25 @@ export async function authenticate(req, res, next) {
       return res.status(401).json({ error: "Account session is no longer valid." });
     }
 
+    const activeBusinessId = decoded.businessId || user.business_id;
+    const membership = await pool.query(
+      `SELECT 1 FROM business_memberships
+       WHERE user_id = $1 AND business_id = $2 LIMIT 1`,
+      [user.id, activeBusinessId]
+    );
+
+    if (!membership.rows.length) {
+      return res.status(403).json({
+        error: "You do not have access to this business."
+      });
+    }
+
     req.user = {
       ...decoded,
       id: user.id,
       userId: user.id,
-      businessId: user.business_id,
-      role: user.role || "owner",
+      businessId: activeBusinessId,
+      role: user.role,
       tokenVersion: Number(user.token_version || 0)
     };
 
