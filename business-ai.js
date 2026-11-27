@@ -719,6 +719,7 @@ async function assignLead(req, res) {
          FROM users
          WHERE id = $1
            AND business_id = $2
+           AND role = 'sales'
            AND is_active = TRUE
          LIMIT 1`,
         [assigneeId, req.user.businessId]
@@ -726,7 +727,7 @@ async function assignLead(req, res) {
 
       if (!employee.rows.length) {
         return res.status(400).json({
-          error: "Employee not found or inactive in your business."
+          error: "Active sales employee not found in your business."
         });
       }
 

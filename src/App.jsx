@@ -260,7 +260,7 @@ function logoutBusiness() {
           if (!teamResponse.ok) throw new Error(teamData.error || "Could not load employees.");
           setLeadTeamMembers(
             (Array.isArray(teamData.members) ? teamData.members : [])
-              .filter((member) => member.role !== "owner")
+              .filter((member) => member.role === "sales")
           );
         } catch (teamError) {
           console.error("Lead team load failed:", teamError);
